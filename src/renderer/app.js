@@ -200,6 +200,12 @@ async function refreshApps() {
 
 // ---------------------------------------------------------------- 添加 / 编辑
 
+// 平台差异：Windows 无 python3 命令，静态服务预设用 python（macOS/Linux 维持 python3）。
+// 平台经 preload 桥（webdeck.platform）暴露，不依赖 navigator 推断。
+const STATIC_SERVER_CMD = webdeck.platform === 'win32'
+  ? 'python -m http.server 8000'
+  : 'python3 -m http.server 8000';
+
 const PRESETS = {
   dsh: {
     name: 'DeepSeek Harness',
@@ -210,7 +216,7 @@ const PRESETS = {
   static: {
     name: '本地静态服务',
     url: 'http://127.0.0.1:8000',
-    launch: { mode: 'shell', commandLine: 'python3 -m http.server 8000', cwd: '' },
+    launch: { mode: 'shell', commandLine: STATIC_SERVER_CMD, cwd: '' },
     monitor: { enabled: true, url: 'http://127.0.0.1:8000', intervalSec: 5, expectedStatus: 200 },
   },
 };

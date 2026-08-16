@@ -255,6 +255,22 @@ console.log('== 测试 8: 启动前健康守卫（isHealthy：通过则不应再
   srv.close();
 }
 
+console.log('== 测试 9: 平台差异纯函数（跨平台适配，不依赖真实平台） ==');
+{
+  const { resolveShell, shellArgs, winTaskkillArgs } = await import('../src/main/process-manager.js');
+  check('win32 shell = ComSpec',
+    resolveShell('win32', { ComSpec: 'C:\\Windows\\System32\\cmd.exe' }) === 'C:\\Windows\\System32\\cmd.exe');
+  check('win32 无 ComSpec 回退 cmd.exe', resolveShell('win32', {}) === 'cmd.exe');
+  check('POSIX shell = $SHELL', resolveShell('darwin', { SHELL: '/bin/bash' }) === '/bin/bash');
+  check('POSIX 无 SHELL 回退 /bin/zsh', resolveShell('linux', {}) === '/bin/zsh');
+  check('win32 shell 参数为 /d /s /c', JSON.stringify(shellArgs('win32')) === JSON.stringify(['/d', '/s', '/c']));
+  check('POSIX shell 参数为 -lc', JSON.stringify(shellArgs('darwin')) === JSON.stringify(['-lc']));
+  check('taskkill 温和参数（/T 不带 /F）',
+    JSON.stringify(winTaskkillArgs(1234)) === JSON.stringify(['/pid', '1234', '/T']));
+  check('taskkill 强制参数（/T /F）',
+    JSON.stringify(winTaskkillArgs(1234, { force: true })) === JSON.stringify(['/pid', '1234', '/T', '/F']));
+}
+
 server.close();
 console.log(failures === 0 ? '\n✅ 全部通过' : `\n❌ ${failures} 个断言失败`);
 process.exit(failures === 0 ? 0 : 1);

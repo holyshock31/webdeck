@@ -377,9 +377,14 @@ function registerIpc() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// 冒烟模式开关：支持跨平台 argv 参数（npm run smoke → electron . --smoke），
+// 保留 WEBDECK_SMOKE / WEBDECK_SMOKE_DSH 环境变量写法（旧命令兼容）。
+const SMOKE = Boolean(process.env.WEBDECK_SMOKE) || process.argv.includes('--smoke');
+const SMOKE_DSH = Boolean(process.env.WEBDECK_SMOKE_DSH) || process.argv.includes('--smoke-dsh');
+
 async function runSmokeTest() {
-  // WEBDECK_SMOKE_DSH=1 时改为直接验证真实 DSH Web UI（本机 127.0.0.1:3080）
-  if (process.env.WEBDECK_SMOKE_DSH) {
+  // WEBDECK_SMOKE_DSH=1 / --smoke-dsh 时改为直接验证真实 DSH Web UI（本机 127.0.0.1:3080）
+  if (SMOKE_DSH) {
     try {
       const log = (m) => console.error(`[dsh-smoke] ${m}`);
       log('step0: enter runSmokeTest');
@@ -622,7 +627,7 @@ app.whenReady().then(async () => {
   if (lastId && apps.get(lastId)) await activateApp(lastId);
   else if (first) await activateApp(first.id);
 
-  if (process.env.WEBDECK_SMOKE || process.env.WEBDECK_SMOKE_DSH) {
+  if (SMOKE || SMOKE_DSH) {
     await runSmokeTest();
   }
 });

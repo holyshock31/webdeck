@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Core unit tests
+        run: npm test
+
+      # Linux runner 无显示器：xvfb-run 提供虚拟显示；--no-sandbox 规避 runner 环境
+      # 下 Chromium SUID sandbox 权限问题（仅冒烟测试用，不影响产物行为）。
+      - name: Smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run smoke -- --no-sandbox
+
+      - name: Smoke test (macOS / Windows)
+        if: runner.os != 'Linux'
+        run: npm run smoke

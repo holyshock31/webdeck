@@ -2,6 +2,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('webdeck', {
+  // 运行平台（process.platform 值：darwin / win32 / linux），供渲染层做平台相关默认值
+  platform: process.platform,
+
   // 应用注册表
   listApps: () => ipcRenderer.invoke('apps:list'),
   addApp: (cfg) => ipcRenderer.invoke('apps:add', cfg),

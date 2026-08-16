@@ -79,6 +79,27 @@ scripts/
 - **内置预设**：本地静态服务预设的 `python` 命令按平台自动选择（Windows `python` / macOS、Linux `python3`），也可在添加弹窗里手动修改
 - **CI**：`.github/workflows/ci.yml` 在 macOS / Windows / Linux 三平台自动跑 `npm test` 与 `npm run smoke`（Linux 用 `xvfb-run`），任何平台失败都会标红
 
+## 发布流程
+
+WebDeck 用 electron-builder 打包，GitHub Actions 在打 tag 时自动构建并上传 **GitHub Releases**：
+
+```bash
+# 1. 更新 package.json 的 version（如 0.2.0），提交并推送
+# 2. 打 tag 并推送（tag 名 v<version>，如 v0.2.0）
+git tag v0.2.0 && git push origin v0.2.0
+# 3. CI 自动构建（各自原生构建，禁止交叉编译）：
+#    macOS → dmg + zip · Windows → NSIS 安装包 + portable 便携版 · Linux → AppImage
+#    完成后到仓库 Releases 页面下载
+```
+
+本地构建（验证配置用）：`npm run dist`（当前平台）、`npm run dist:mac` / `dist:win` / `dist:linux`，产物在 `dist/`。
+
+### 签名决策（当前：macOS 未签名 / Windows 未签名）
+
+- **macOS**：Developer ID 签名 + 公证需要 Apple Developer 账号（$99/年）与 App 专用密码。未配置时构建出的产物带 `-unsigned` 标记，首次打开会被 Gatekeeper 拦截——绕过方法见下方常见问题。配置方式：仓库 secrets 设 `CSC_LINK` / `CSC_KEY_PASSWORD`（证书）与 `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`（公证），CI 检测到后自动签名 + 公证
+- **Windows**：当前决策「**先不签**」（零成本）——未签名 exe 首次运行会有 SmartScreen 提示，绕过方法见下方常见问题；后续分发规模上来可升级 **Azure Trusted Signing**（微软云签名，低成本、信誉建立快），升级路径：配置该服务后把签名步骤接入 release.yml
+- 两个决策都会随发布演进更新：产物一旦对外分发，建议优先补齐 macOS 签名公证（Gatekeeper 拦截体验最差）
+
 ## 常见问题
 
 - **`npm install` 后 Electron 二进制下载失败（EPERM ~/Library/Caches/electron）**：缓存目录不可写时，用
@@ -87,10 +108,13 @@ scripts/
 - **Shell 命令里的路径**：工作目录留空时继承 WebDeck 进程的 cwd；建议 `cd <目录> && <命令>` 写法
 - **Windows 上停止本地服务的行为差异**：Windows 没有 SIGTERM 进程组语义，停止走 `taskkill /pid <pid> /T /F` 强杀整棵进程树——控制台进程（cmd/node 等）无法温和终止，这是平台差异，不是缺陷
 - **Windows 上启动本地服务不弹黑窗**：所有本地进程均以隐藏控制台窗口启动（`windowsHide: true`）；若看到黑色控制台窗口闪出，请确认 WebDeck 版本包含跨平台适配（0.2 起）
+- **Windows SmartScreen 提示「Windows 已保护你的电脑」**：未签名产物的正常提示。点击「更多信息」→「仍要运行」即可；若提示「未知发布者」且经常出现，说明信誉尚未建立，属正常现象
+- **macOS Gatekeeper 拦截「无法打开，因为无法验证开发者」**：未签名/未公证产物的正常提示。右键（或按住 Control 点击）应用图标 →「打开」→ 确认；或系统设置 → 隐私与安全性 →「仍要打开」
+- **下载的产物未签名标记 `-unsigned`**：表示该次构建未配置签名 secrets（见「发布流程 → 签名决策」），功能不受影响，仅首次打开需按上两条绕过提示
 
 ## 路线图
 
-- [ ] electron-builder 打包（dmg/zip + NSIS/portable + AppImage，`appId` 待定）
+- [x] electron-builder 打包（dmg/zip + NSIS/portable + AppImage，`appId: com.webdeck.app`）+ GitHub Releases 流水线
 - [x] Windows 运行时适配（进程组终止方式、平台默认命令、三平台 CI）
 - [ ] 侧边栏可折叠 / 宽度可调
 - [ ] 应用级代理配置、证书忽略开关

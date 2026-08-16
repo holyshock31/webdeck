@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            args: --mac
+          - os: windows-latest
+            args: --win
+          - os: ubuntu-latest
+            args: --linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # 三平台各自原生构建（禁止交叉编译：mac runner 不产 Windows 包）。
+      # macOS：secrets 齐备时自动签名 + 公证（notarize 经 --config 注入）；
+      #       secrets 缺失时构建未签名产物，产物名带 -unsigned 标记，README 有绕过指引。
+      # Windows：当前决策「先不签」（SmartScreen 提示，README 有绕过指引）。
+      - name: Build macOS (signed + notarized)
+        if: runner.os == 'macOS' && env.CSC_LINK != ''
+        run: npx electron-builder --mac \
+          --config.mac.notarize=true \
+          --config.mac.notarize.teamId=${{ secrets.APPLE_TEAM_ID }}
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Build macOS (unsigned, no notarization)
+        if: runner.os == 'macOS' && env.CSC_LINK == ''
+        run: |
+          npx electron-builder --mac
+          for f in dist/*.dmg dist/*.zip; do
+            [ -e "$f" ] && mv "$f" "${f%.*}-unsigned.${f##*.}"
+          done
+
+      - name: Build Windows
+        if: runner.os == 'Windows'
+        run: npx electron-builder --win
+
+      - name: Build Linux
+        if: runner.os == 'Linux'
+        run: npx electron-builder --linux
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.exe
+            dist/*.AppImage
+          fail_on_unmatched_files: false

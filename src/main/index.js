@@ -9,9 +9,11 @@ import { createMonitor } from './monitor.js';
 
 // 应用身份声明：直接 `electron .` 开发态运行时，进程/任务栏身份默认取自 Electron
 // 二进制。这里显式声明项目名（Windows 任务栏与通知按 AppUserModelID 归属；
-// macOS Dock 悬停名不受此控制，见 scripts/dev-mac.sh 的改名 .app 副本方案）
+// macOS Dock 悬停名不受此控制，见 scripts/dev.sh 的改名 .app 副本方案）。
+// AppUserModelID 与打包 appId（com.webdeck.app）及 dev.sh 的 CFBundleIdentifier 保持一致，
+// 保证 Windows 任务栏/通知归属在开发态与打包态统一。
 app.setName('WebDeck');
-app.setAppUserModelId('com.webdeck.WebDeck');
+app.setAppUserModelId('com.webdeck.app');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ICON = path.join(__dirname, '../../assets/icon.png');

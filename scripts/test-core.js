@@ -57,7 +57,18 @@ console.log('== 测试 1: Shell 命令启动 + 健康监测 → running ==');
   const st = await waitStatus(app.id, 'running');
   check('状态达到 running', Boolean(st), JSON.stringify(statusLog.at(-1)));
   check('进程存活', procs.info(app.id)?.proc.exitCode === null);
-  check('日志已采集', (procs.info(app.id)?.logLines ?? []).some((l) => l.includes('WEBDECK_DEMO_PORT')));
+  // 日志断言用短轮询：running 状态由健康检查立即触发，子进程 stdout 的 pipe
+  // 数据事件可能稍后到达（CI 机器上稳定出现该竞态），轮询等待而非即时断言。
+  const tLog = Date.now();
+  let logCollected = false;
+  while (Date.now() - tLog < 3000) {
+    if ((procs.info(app.id)?.logLines ?? []).some((l) => l.includes('WEBDECK_DEMO_PORT'))) {
+      logCollected = true;
+      break;
+    }
+    await sleep(50);
+  }
+  check('日志已采集', logCollected);
   monitor.stop(app.id);
   await procs.stop(app);
   await sleep(500);

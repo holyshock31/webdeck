@@ -39,7 +39,7 @@ jobs:
       # Windows：当前决策「先不签」（SmartScreen 提示，README 有绕过指引）。
       - name: Build macOS (signed + notarized)
         if: runner.os == 'macOS' && env.CSC_LINK != ''
-        run: npx electron-builder --mac \
+        run: npx electron-builder --mac --publish never \
           --config.mac.notarize=true \
           --config.mac.notarize.teamId=${{ secrets.APPLE_TEAM_ID }}
         env:
@@ -52,18 +52,18 @@ jobs:
       - name: Build macOS (unsigned, no notarization)
         if: runner.os == 'macOS' && env.CSC_LINK == ''
         run: |
-          npx electron-builder --mac
+          npx electron-builder --mac --publish never
           for f in dist/*.dmg dist/*.zip; do
             [ -e "$f" ] && mv "$f" "${f%.*}-unsigned.${f##*.}"
           done
 
       - name: Build Windows
         if: runner.os == 'Windows'
-        run: npx electron-builder --win
+        run: npx electron-builder --win --publish never
 
       - name: Build Linux
         if: runner.os == 'Linux'
-        run: npx electron-builder --linux
+        run: npx electron-builder --linux --publish never
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2

@@ -109,8 +109,13 @@ git tag v0.2.0 && git push origin v0.2.0
 - **Windows 上停止本地服务的行为差异**：Windows 没有 SIGTERM 进程组语义，停止走 `taskkill /pid <pid> /T /F` 强杀整棵进程树——控制台进程（cmd/node 等）无法温和终止，这是平台差异，不是缺陷
 - **Windows 上启动本地服务不弹黑窗**：所有本地进程均以隐藏控制台窗口启动（`windowsHide: true`）；若看到黑色控制台窗口闪出，请确认 WebDeck 版本包含跨平台适配（0.2 起）
 - **Windows SmartScreen 提示「Windows 已保护你的电脑」**：未签名产物的正常提示。点击「更多信息」→「仍要运行」即可；若提示「未知发布者」且经常出现，说明信誉尚未建立，属正常现象
-- **macOS Gatekeeper 拦截「无法打开，因为无法验证开发者」**：未签名/未公证产物的正常提示。右键（或按住 Control 点击）应用图标 →「打开」→ 确认；或系统设置 → 隐私与安全性 →「仍要打开」
-- **下载的产物未签名标记 `-unsigned`**：表示该次构建未配置签名 secrets（见「发布流程 → 签名决策」），功能不受影响，仅首次打开需按上两条绕过提示
+- **macOS Gatekeeper 拦截「无法打开，因为无法验证开发者」**：**已签名但未公证**产物的正常提示。右键（或按住 Control 点击）应用图标 →「打开」→ 确认；或系统设置 → 隐私与安全性 →「仍要打开」
+- **macOS 报「“WebDeck” is damaged and can’t be opened」**：**未签名**（`-unsigned`）产物的正常提示——Gatekeeper 对无签名应用不提供「仍要打开」选项。解法：移除隔离属性后打开
+  ```bash
+  xattr -dr com.apple.quarantine /Applications/WebDeck.app
+  ```
+  注意：这是「先不签」决策的已知代价；配置签名 secrets 后产出的 dmg 无需此步骤
+- **下载的产物未签名标记 `-unsigned`**：表示该次构建未配置签名 secrets（见「发布流程 → 签名决策」），功能不受影响，按上面两条对应的指引放行
 
 ## 路线图
 

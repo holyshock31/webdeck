@@ -18,7 +18,7 @@
 - [ ] 图标为 `assets/icon.icns` 对应图标（非默认 Electron 图标）
 - [ ] 添加本地服务应用（如静态服务预设）→ 健康监测状态由黄转绿，功能与开发态一致
 - [ ] 已签名+公证形态：首次打开**不触发** Gatekeeper 拦截
-- [ ] 未签名形态：首次打开触发 Gatekeeper 拦截，按 README「常见问题」的「仍要打开」指引可正常使用
+- [ ] 未签名形态（`-unsigned` 产物）：首次打开报「is damaged and can't be opened」——按 README 常见问题执行 `xattr -dr com.apple.quarantine /Applications/WebDeck.app` 后正常打开（Gatekeeper 对无签名应用不提供「仍要打开」选项）
 
 ## Windows
 

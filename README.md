@@ -58,7 +58,7 @@ scripts/
 设计要点：
 
 - **每个应用一个独立 session 分区**（`persist:webdeck-<id>`）：登录态互不串扰、重启保留
-- **进程终止的平台适配**：POSIX（macOS/Linux）以 `detached` 进程组启动，停止时 SIGTERM 整组、2 秒后 SIGKILL，不遗留子进程；Windows 用 `taskkill /pid <pid> /T` 终止整棵进程树（必要时 `/F` 强杀），spawn 统一 `windowsHide: true` 不弹控制台窗口
+- **进程终止的平台适配**：POSIX（macOS/Linux）以 `detached` 进程组启动，停止时 SIGTERM 整组、2 秒后 SIGKILL，不遗留子进程；Windows 用 `taskkill /pid <pid> /T /F` 强杀整棵进程树（控制台进程无温和终止语义），spawn 统一 `windowsHide: true` 不弹控制台窗口
 - **Shell 命令的默认 shell 按平台选择**：Windows 用 `%ComSpec%`（cmd.exe `/d /s /c`），macOS/Linux 用 `$SHELL` 或 `/bin/zsh`
 - **状态机**：健康检查通过 → `running`；进程在跑但检查未通过 → `starting`（超时转 `error`）；进程退出/未启动 → `stopped`
 - **安全**：远程页面运行在 sandbox + contextIsolation 中，无 Node 能力；`window.open` 一律转到系统浏览器；权限按白名单放行
@@ -85,7 +85,7 @@ scripts/
   `electron_config_cache="$PWD/.electron-cache" node node_modules/electron/install.js` 手动下载（或先 `npm install --ignore-scripts` 再手动跑 install.js）
 - **服务已启动但状态一直是 starting**：检查健康检查 URL 与期望状态码（部分服务 302 跳转，把期望码改为 302 或让检查 URL 指向具体接口）
 - **Shell 命令里的路径**：工作目录留空时继承 WebDeck 进程的 cwd；建议 `cd <目录> && <命令>` 写法
-- **Windows 上停止本地服务的行为差异**：Windows 没有 SIGTERM 进程组语义，停止走 `taskkill /pid <pid> /T`（2 秒后仍存活则 `/F` 强杀）——是强杀语义，与 macOS 的「SIGTERM 优雅退出 → SIGKILL」二段式不同；这是平台差异，不是缺陷
+- **Windows 上停止本地服务的行为差异**：Windows 没有 SIGTERM 进程组语义，停止走 `taskkill /pid <pid> /T /F` 强杀整棵进程树——控制台进程（cmd/node 等）无法温和终止，这是平台差异，不是缺陷
 - **Windows 上启动本地服务不弹黑窗**：所有本地进程均以隐藏控制台窗口启动（`windowsHide: true`）；若看到黑色控制台窗口闪出，请确认 WebDeck 版本包含跨平台适配（0.2 起）
 
 ## 路线图

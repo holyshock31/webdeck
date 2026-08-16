@@ -135,16 +135,12 @@ export function createProcessManager() {
     }
 
     if (process.platform === 'win32') {
-      // 先温和终止（taskkill /T 不带 /F），失败（进程不存在/无窗口响应）回退直接 kill
-      const ok = await killWinTree(info.proc.pid, false);
+      // taskkill /T /F 直接强杀整棵进程树：Windows 控制台进程（cmd/node 等无窗口进程）
+      // 无法被温和终止（不带 /F 的 taskkill 对它们报"只能强制终止"），故无二段式语义。
+      const ok = await killWinTree(info.proc.pid, true);
       if (!ok) {
         try { info.proc.kill(); } catch { /* already dead */ }
       }
-      // 2 秒后仍存活则 /T /F 强杀整棵进程树
-      setTimeout(async () => {
-        const again = procs.get(app.id);
-        if (again && again.proc.exitCode === null) await killWinTree(info.proc.pid, true);
-      }, 2000);
       return true;
     }
 
@@ -161,13 +157,13 @@ export function createProcessManager() {
     return true;
   }
 
-  /** 停止一批应用（退出时清理用，仅温和终止：POSIX SIGTERM 整组 / win32 taskkill /T）。 */
+  /** 停止一批应用（退出时清理用）。POSIX SIGTERM 整组；win32 taskkill /T /F 强杀整棵进程树。 */
   function stopMany(apps) {
     for (const app of apps) {
       const info = procs.get(app.id);
       if (!info) continue;
       if (process.platform === 'win32') {
-        killWinTree(info.proc.pid, false);
+        killWinTree(info.proc.pid, true);
         continue;
       }
       try { process.kill(-info.proc.pid, 'SIGTERM'); }

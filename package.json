@@ -1,0 +1,17 @@
+{
+  "name": "webdeck",
+  "productName": "WebDeck",
+  "version": "0.1.0",
+  "description": "通用桌面网页包装器：通过 URL 添加应用，支持本地命令启动方式与健康监测。macOS 优先。",
+  "type": "module",
+  "main": "src/main/index.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "smoke": "WEBDECK_SMOKE=1 electron .",
+    "test": "node scripts/test-core.js"
+  },
+  "devDependencies": {
+    "electron": "^37.0.0"
+  }
+}

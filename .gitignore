@@ -1,0 +1,7 @@
+node_modules/
+.npm-cache/
+.electron-cache/
+dist/
+out/
+.DS_Store
+*.log

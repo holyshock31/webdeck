@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'none'" />
+  <title>WebDeck</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <aside id="sidebar">
+    <header id="sidebar-header">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <span class="brand-name">WebDeck</span>
+      </div>
+      <button id="btn-add" class="icon-btn" title="添加应用 (⌘N)">＋</button>
+    </header>
+
+    <div id="toolbar">
+      <button id="tb-toggle" class="icon-btn" title="启动 / 停止本地服务">▶</button>
+      <button id="tb-reload" class="icon-btn" title="重新加载 (⌘R)">↻</button>
+      <button id="tb-external" class="icon-btn" title="在系统浏览器中打开">↗</button>
+      <button id="tb-logs" class="icon-btn" title="查看启动日志">☰</button>
+      <button id="tb-edit" class="icon-btn" title="编辑当前应用">✎</button>
+    </div>
+
+    <nav id="app-list"></nav>
+
+    <footer id="sidebar-footer">
+      <div id="status-line">尚未选择应用</div>
+      <div id="status-detail"></div>
+    </footer>
+  </aside>
+
+  <main id="content">
+    <div id="empty-hint">
+      <p class="hint-title">还没有打开任何应用</p>
+      <p class="hint-sub">点击左上角 ＋ 添加一个应用<br/>（URL + 启动方式 + 健康监测）</p>
+    </div>
+  </main>
+
+  <!-- 添加 / 编辑应用弹窗 -->
+  <div id="modal-app" class="modal-backdrop hidden">
+    <div class="modal">
+      <h2 id="modal-app-title">添加应用</h2>
+      <form id="form-app">
+        <div class="form-row">
+          <label>预设</label>
+          <select id="f-preset">
+            <option value="">自定义</option>
+            <option value="dsh">DeepSeek Harness（本地 dsh 服务）</option>
+            <option value="static">本地静态服务（python3 http.server）</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>名称 *</label>
+          <input id="f-name" type="text" placeholder="例如 DeepSeek Harness" required />
+        </div>
+        <div class="form-row">
+          <label>URL *</label>
+          <input id="f-url" type="text" placeholder="http://127.0.0.1:3080 或 https://…" required />
+        </div>
+
+        <fieldset>
+          <legend>启动方式（可选：本地服务自动拉起）</legend>
+          <div class="radio-row">
+            <label><input type="radio" name="f-launch-mode" value="none" checked /> 无（仅打开 URL）</label>
+            <label><input type="radio" name="f-launch-mode" value="direct" /> 直接命令</label>
+            <label><input type="radio" name="f-launch-mode" value="shell" /> Shell 命令</label>
+          </div>
+          <div class="launch-fields" data-mode="direct" hidden>
+            <div class="form-row">
+              <label>可执行文件 *</label>
+              <input id="f-command" type="text" placeholder="pnpm 或 /usr/local/bin/pnpm" />
+            </div>
+            <div class="form-row">
+              <label>参数（每行一个）</label>
+              <textarea id="f-args" rows="2" placeholder="dsh"></textarea>
+            </div>
+          </div>
+          <div class="launch-fields" data-mode="shell" hidden>
+            <div class="form-row">
+              <label>Shell 命令 *</label>
+              <input id="f-commandLine" type="text" placeholder="cd ~/deepseek-harness && pnpm dsh" />
+            </div>
+          </div>
+          <div class="form-row">
+            <label>工作目录</label>
+            <input id="f-cwd" type="text" placeholder="留空 = 继承 WebDeck 目录" />
+          </div>
+          <div class="form-row">
+            <label>环境变量</label>
+            <textarea id="f-env" rows="2" placeholder="KEY=VALUE，每行一个"></textarea>
+          </div>
+          <div class="checkbox-row">
+            <label><input id="f-waitForUrl" type="checkbox" checked /> 等健康检查通过后标记为运行中</label>
+          </div>
+          <div class="form-row">
+            <label>启动超时（秒）</label>
+            <input id="f-timeoutSec" type="number" min="3" step="1" value="30" />
+          </div>
+          <div class="checkbox-row">
+            <label><input id="f-stopOnQuit" type="checkbox" checked /> 退出 WebDeck 时结束该进程</label>
+          </div>
+          <div class="checkbox-row">
+            <label><input id="f-startOnOpen" type="checkbox" checked /> 切换到该应用时自动启动</label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>健康监测</legend>
+          <div class="checkbox-row">
+            <label><input id="f-monitor" type="checkbox" checked /> 启用健康检查</label>
+          </div>
+          <div class="form-row">
+            <label>检查 URL</label>
+            <input id="f-healthUrl" type="text" placeholder="留空 = 应用 URL" />
+          </div>
+          <div class="form-row">
+            <label>间隔（秒）</label>
+            <input id="f-intervalSec" type="number" min="2" step="1" value="5" />
+          </div>
+          <div class="form-row">
+            <label>期望状态码</label>
+            <input id="f-statusCode" type="number" min="100" max="599" step="1" value="200" />
+          </div>
+        </fieldset>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel" class="btn">取消</button>
+          <button type="submit" class="btn primary">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 日志查看弹窗 -->
+  <div id="modal-logs" class="modal-backdrop hidden">
+    <div class="modal wide">
+      <h2 id="modal-logs-title">启动日志</h2>
+      <pre id="log-content"></pre>
+      <div class="modal-actions">
+        <button type="button" id="btn-logs-close" class="btn">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

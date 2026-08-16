@@ -39,6 +39,13 @@ function killWinTree(pid, force = false) {
 
 // ---------------------------------------------------------------- 进程管理
 
+/** 按平台决定是否 detached：仅 POSIX 需要（进程组语义 + 负 PID 信号终止）。
+ *  Windows 上 detached:true 会导致经 cmd /c 启动的 node 脚本不启动/无输出
+ *  （复现于 GitHub windows-latest），且 Windows 终止走 taskkill /T 进程树，不需要进程组。 */
+export function spawnDetached(platform = process.platform) {
+  return platform !== 'win32';
+}
+
 /**
  * @returns {{ launch(app, onExit): object, stop(app): Promise<boolean>, stopMany(apps): void, info(id): object|null }}
  */
@@ -69,7 +76,7 @@ export function createProcessManager() {
     const cwd = opts.cwd?.trim() ? opts.cwd.trim() : undefined;
     const stdio = ['ignore', 'pipe', 'pipe'];
     // windowsHide: 所有平台统一隐藏子进程控制台窗口（Windows 上避免每次启动闪黑窗）
-    const base = { cwd, env, detached: true, windowsHide: true, stdio };
+    const base = { cwd, env, detached: spawnDetached(), windowsHide: true, stdio };
 
     let child;
     if (opts.mode === 'shell') {

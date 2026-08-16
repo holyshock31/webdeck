@@ -268,7 +268,7 @@ console.log('== 测试 8: 启动前健康守卫（isHealthy：通过则不应再
 
 console.log('== 测试 9: 平台差异纯函数（跨平台适配，不依赖真实平台） ==');
 {
-  const { resolveShell, shellArgs, winTaskkillArgs } = await import('../src/main/process-manager.js');
+  const { resolveShell, shellArgs, winTaskkillArgs, spawnDetached } = await import('../src/main/process-manager.js');
   check('win32 shell = ComSpec',
     resolveShell('win32', { ComSpec: 'C:\\Windows\\System32\\cmd.exe' }) === 'C:\\Windows\\System32\\cmd.exe');
   check('win32 无 ComSpec 回退 cmd.exe', resolveShell('win32', {}) === 'cmd.exe');
@@ -280,6 +280,9 @@ console.log('== 测试 9: 平台差异纯函数（跨平台适配，不依赖真
     JSON.stringify(winTaskkillArgs(1234)) === JSON.stringify(['/pid', '1234', '/T']));
   check('taskkill 强制参数（/T /F）',
     JSON.stringify(winTaskkillArgs(1234, { force: true })) === JSON.stringify(['/pid', '1234', '/T', '/F']));
+  check('win32 不 detached（taskkill 进程树无需进程组，且 detached 会破坏 cmd 子进程）',
+    spawnDetached('win32') === false);
+  check('POSIX detached（进程组信号语义需要）', spawnDetached('darwin') === true && spawnDetached('linux') === true);
 }
 
 server.close();

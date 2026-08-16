@@ -1,6 +1,9 @@
 // process-manager.js — 本地命令启动/停止/日志缓冲（纯 Node，无 Electron 依赖，可单测）
 // 平台差异集中在本文件：POSIX（macOS/Linux）用进程组信号；win32 用 taskkill 终止进程树。
 import { spawn } from 'node:child_process';
+import os from 'node:os';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const MAX_LOG_LINES = 400;
 
@@ -15,6 +18,59 @@ export function resolveShell(platform = process.platform, env = process.env) {
 /** 按平台返回 shell 的执行参数：win32 为 cmd 的 /d /s /c，POSIX 为登录 shell 的 -lc。 */
 export function shellArgs(platform = process.platform) {
   return platform === 'win32' ? ['/d', '/s', '/c'] : ['-lc'];
+}
+
+/**
+ * 在现有 PATH 基础上补全常见用户 bin 目录（已存在的不重复追加）。
+ * 打包版从 Finder/Dock 启动时 PATH 仅为系统默认目录（/usr/bin:/bin:/usr/sbin:/sbin），
+ * 不含 Homebrew / pnpm / npm-global / yarn / nvm 等用户工具路径，导致 `pnpm dsh`
+ * 之类命令 spawn 失败；开发态从终端启动 PATH 完整，补全无副作用。
+ */
+export function resolveEnvPath(platform = process.platform, env = process.env, homedir = os.homedir()) {
+  const home = homedir;
+  const bins = [];
+  if (platform === 'win32') {
+    // 手工反斜杠拼接（path.join 会随运行平台用分隔符，纯函数测试需平台无关）
+    const strip = (s) => s.replace(/[\\/]+$/, '');
+    const local = strip(env.LOCALAPPDATA || '');
+    const roaming = strip(env.APPDATA || '');
+    const user = strip(env.USERPROFILE || home);
+    bins.push(
+      local ? `${local}\\pnpm` : '',
+      roaming ? `${roaming}\\npm` : '',
+      `${user}\\.local\\bin`,
+    );
+  } else {
+    bins.push(
+      '/opt/homebrew/bin',                      // Apple Silicon Homebrew
+      '/usr/local/bin',                         // Intel Homebrew / 传统路径
+      path.join(home, '.local', 'bin'),
+      path.join(home, '.local', 'share', 'pnpm'), // pnpm 全局 bin
+      path.join(home, '.npm-global', 'bin'),
+      path.join(home, '.yarn', 'bin'),
+      path.join(home, '.bun', 'bin'),
+    );
+    // nvm 版本目录：~/.nvm/versions/node/<ver>/bin（版本目录可能多个，全部补上）
+    try {
+      const nvmRoot = path.join(home, '.nvm', 'versions', 'node');
+      if (fs.existsSync(nvmRoot)) {
+        for (const ver of fs.readdirSync(nvmRoot)) {
+          bins.push(path.join(nvmRoot, ver, 'bin'));
+        }
+      }
+    } catch { /* 目录不可读时忽略 */ }
+  }
+  const delim = platform === 'win32' ? ';' : ':';
+  const current = (env.PATH ?? '').split(delim).filter(Boolean);
+  const seen = new Set(current);
+  const merged = [...current];
+  for (const b of bins) {
+    if (b && !seen.has(b)) {
+      merged.push(b);
+      seen.add(b);
+    }
+  }
+  return merged.join(delim);
 }
 
 /** 构造 taskkill 参数：/pid <pid> /T 终止整棵进程树，force 时追加 /F 强杀。 */
@@ -73,6 +129,8 @@ export function createProcessManager() {
 
     const opts = app.launch;
     const env = { ...process.env, ...(opts.env ?? {}) };
+    // GUI 启动（打包版）PATH 不完整：补全常见用户 bin 目录，保证 pnpm/node 等命令可解析
+    env.PATH = resolveEnvPath(process.platform, env, os.homedir());
     const cwd = opts.cwd?.trim() ? opts.cwd.trim() : undefined;
     const stdio = ['ignore', 'pipe', 'pipe'];
     // windowsHide: 所有平台统一隐藏子进程控制台窗口（Windows 上避免每次启动闪黑窗）

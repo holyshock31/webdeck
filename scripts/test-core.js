@@ -268,7 +268,7 @@ console.log('== 测试 8: 启动前健康守卫（isHealthy：通过则不应再
 
 console.log('== 测试 9: 平台差异纯函数（跨平台适配，不依赖真实平台） ==');
 {
-  const { resolveShell, shellArgs, winTaskkillArgs, spawnDetached } = await import('../src/main/process-manager.js');
+  const { resolveShell, shellArgs, winTaskkillArgs, spawnDetached, resolveEnvPath } = await import('../src/main/process-manager.js');
   check('win32 shell = ComSpec',
     resolveShell('win32', { ComSpec: 'C:\\Windows\\System32\\cmd.exe' }) === 'C:\\Windows\\System32\\cmd.exe');
   check('win32 无 ComSpec 回退 cmd.exe', resolveShell('win32', {}) === 'cmd.exe');
@@ -283,6 +283,19 @@ console.log('== 测试 9: 平台差异纯函数（跨平台适配，不依赖真
   check('win32 不 detached（taskkill 进程树无需进程组，且 detached 会破坏 cmd 子进程）',
     spawnDetached('win32') === false);
   check('POSIX detached（进程组信号语义需要）', spawnDetached('darwin') === true && spawnDetached('linux') === true);
+
+  // PATH 补全（打包版 GUI 启动时 PATH 残缺，pnpm/node 等命令无法解析）
+  const p = resolveEnvPath('darwin', { PATH: '/usr/bin:/bin' }, '/Users/t');
+  const parts = p.split(':');
+  check('PATH 补全保留原 PATH', parts[0] === '/usr/bin' && parts[1] === '/bin');
+  check('PATH 补入 /opt/homebrew/bin', parts.includes('/opt/homebrew/bin'));
+  check('PATH 补入 pnpm 全局 bin', parts.includes('/Users/t/.local/share/pnpm'));
+  check('PATH 补入 ~/.local/bin', parts.includes('/Users/t/.local/bin'));
+  const p2 = resolveEnvPath('darwin', { PATH: '/usr/bin:/bin:/opt/homebrew/bin' }, '/Users/t');
+  check('PATH 已存在的目录不重复追加', p2.split(':').filter((x) => x === '/opt/homebrew/bin').length === 1);
+  const pw = resolveEnvPath('win32', { PATH: 'C:\\Windows', LOCALAPPDATA: 'C:\\Users\\t\\AppData\\Local', APPDATA: 'C:\\Users\\t\\AppData\\Roaming' }, 'C:\\Users\\t');
+  check('win32 PATH 补入 pnpm/npm 目录',
+    pw.includes('C:\\Users\\t\\AppData\\Local\\pnpm') && pw.includes('C:\\Users\\t\\AppData\\Roaming\\npm'));
 }
 
 server.close();

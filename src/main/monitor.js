@@ -41,7 +41,8 @@ export function createMonitor({ getApp, getProc, setStatus }) {
 
     const proc = getProc(id);
     const hasLaunch = app.launch?.mode !== 'none';
-    const procAlive = Boolean(proc && proc.proc.exitCode === null);
+    const spawnFailed = Boolean(proc?.spawnError);
+    const procAlive = Boolean(proc && !spawnFailed && proc.proc.exitCode === null);
     const launchTimeout = app.launch?.timeoutMs ?? 30000;
 
     let status;
@@ -49,6 +50,10 @@ export function createMonitor({ getApp, getProc, setStatus }) {
     if (statusCode !== null && statusCode === expected) {
       status = 'running';
       detail = `健康检查通过 (${statusCode}, ${healthUrl})`;
+    } else if (spawnFailed) {
+      // spawn 失败 tombstone：保持 error 直到用户重试/停止，不翻回 stopped
+      status = 'error';
+      detail = `进程启动失败: ${proc.spawnError}`;
     } else if (hasLaunch && procAlive) {
       const elapsed = Date.now() - proc.startTime;
       if (elapsed > launchTimeout) {
@@ -84,6 +89,17 @@ export function createMonitor({ getApp, getProc, setStatus }) {
     return tick(id);
   }
 
+  /** 启动前守卫：单次健康探测。服务已在响应（如外部已手动启动）返回 true，
+   *  调用方不应再拉起进程实例；监测未启用时返回 false（维持按状态启动的原行为）。 */
+  async function isHealthy(app) {
+    if (!app?.monitor?.enabled) return false;
+    const healthUrl = app.monitor.url || app.url;
+    const expected = app.monitor.expectedStatus ?? 200;
+    const timeoutMs = app.monitor.timeoutMs ?? 3000;
+    const code = await probe(healthUrl, timeoutMs);
+    return code !== null && code === expected;
+  }
+
   function stop(id) {
     const timer = timers.get(id);
     if (timer) {
@@ -97,5 +113,5 @@ export function createMonitor({ getApp, getProc, setStatus }) {
     timers.clear();
   }
 
-  return { start, stop, stopAll, poke };
+  return { start, stop, stopAll, poke, isHealthy };
 }

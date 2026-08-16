@@ -6,7 +6,10 @@ const AVATAR_COLORS = ['#4f8cff', '#7f5af0', '#3ecf8e', '#f5b84c', '#f0656e', '#
 let apps = [];
 let statuses = new Map(); // id -> { status, detail }
 let activeId = null;
+let theme = 'dark';       // 'dark' | 'light'（持久化于 settings.theme）
 let logTimer = null;
+let sidebarCollapsed = false; // 侧边栏收起态（持久化于 settings.sidebarCollapsed，缺失默认展开）
+let lastSidebarToggle = 0;    // 防抖：菜单加速键与 keydown 双通道可能同时触发，避免重复切换
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -33,8 +36,23 @@ function renderList() {
 
     const avatar = document.createElement('span');
     avatar.className = 'app-avatar';
-    avatar.style.background = avatarColor(app.name);
-    avatar.textContent = app.name.slice(0, 1).toUpperCase();
+    if (app.icon) {
+      // 有图标：渲染图片，加载失败回退首字母色块
+      avatar.style.background = 'transparent';
+      const img = document.createElement('img');
+      img.className = 'app-avatar-img';
+      img.src = app.icon;
+      img.alt = '';
+      img.onerror = () => {
+        avatar.replaceChildren();
+        avatar.style.background = avatarColor(app.name);
+        avatar.textContent = app.name.slice(0, 1).toUpperCase();
+      };
+      avatar.appendChild(img);
+    } else {
+      avatar.style.background = avatarColor(app.name);
+      avatar.textContent = app.name.slice(0, 1).toUpperCase();
+    }
 
     const info = document.createElement('div');
     info.className = 'app-info';
@@ -50,10 +68,20 @@ function renderList() {
     dot.className = `app-dot ${statusOf(app.id)}`;
     dot.id = `dot-${app.id}`;
 
-    item.append(avatar, info, dot);
+    // 每个应用独立的手动启动/停止按钮（▶/⏹）：作用于该应用，不切换当前标签
+    const ctl = document.createElement('button');
+    ctl.className = 'app-ctl';
+    ctl.id = `ctl-${app.id}`;
+    ctl.addEventListener('click', (e) => {
+      e.stopPropagation(); // 不触发 .app-item 的标签切换
+      toggleAppProc(app.id);
+    });
+
+    item.append(avatar, info, dot, ctl);
     item.addEventListener('click', () => activate(app.id));
     nav.appendChild(item);
   }
+  for (const app of apps) updateAppCtl(app.id);
   updateToolbar();
   updateFooter();
 }
@@ -77,13 +105,49 @@ function setActive(id) {
 
 function updateToolbar() {
   const has = Boolean(activeId);
+  const app = apps.find((a) => a.id === activeId);
+  const hasLaunch = Boolean(app && app.launch?.mode !== 'none');
   const status = statusOf(activeId);
   const running = status === 'running' || status === 'starting';
   const toggle = $('#tb-toggle');
-  toggle.disabled = !has;
-  toggle.textContent = running ? '⏹' : '▶';
-  toggle.title = running ? '停止本地服务' : '启动本地服务';
+  toggle.disabled = !has || !hasLaunch;
+  if (!hasLaunch) {
+    toggle.textContent = '▶';
+    toggle.title = '该应用未配置本地启动';
+  } else {
+    toggle.textContent = running ? '⏹' : '▶';
+    toggle.title = running ? '停止本地服务' : '启动本地服务';
+  }
   for (const id of ['tb-reload', 'tb-external', 'tb-logs', 'tb-edit']) $(`#${id}`).disabled = !has;
+}
+
+/** 单个应用项的手动控制按钮：随状态显示 ▶/⏹；无本地启动配置时禁用并提示。 */
+function updateAppCtl(id) {
+  const ctl = document.getElementById(`ctl-${id}`);
+  const app = apps.find((a) => a.id === id);
+  if (!ctl || !app) return;
+  const hasLaunch = app.launch?.mode !== 'none';
+  if (!hasLaunch) {
+    ctl.disabled = true;
+    ctl.textContent = '▶';
+    ctl.title = '该应用未配置本地启动';
+    return;
+  }
+  const running = statusOf(id) === 'running' || statusOf(id) === 'starting';
+  ctl.disabled = false;
+  ctl.textContent = running ? '⏹' : '▶';
+  ctl.title = running ? '停止本地服务' : '启动本地服务';
+}
+
+/** 手动启动/停止某个应用（含未激活的）。失败给出可见反馈，状态由 apps:status 推送同步。 */
+async function toggleAppProc(id) {
+  const running = statusOf(id) === 'running' || statusOf(id) === 'starting';
+  try {
+    const res = running ? await webdeck.stopApp(id) : await webdeck.startApp(id);
+    if (res && res.ok === false) alert(`操作失败: ${res.error ?? '未知错误'}`);
+  } catch (err) {
+    alert(`操作失败: ${err.message ?? err}`);
+  }
 }
 
 function updateFooter() {
@@ -104,7 +168,11 @@ function updateDot(id) {
     const app = apps.find((a) => a.id === id);
     if (app) dot.closest('.app-item').title = `${app.name}\n${app.url}\n状态: ${statusDetail(id)}`;
   }
-  if (id === activeId) updateFooter();
+  updateAppCtl(id); // 状态推送时同步该应用的 ▶/⏹ 按钮
+  if (id === activeId) {
+    updateToolbar();
+    updateFooter();
+  }
 }
 
 // ---------------------------------------------------------------- 交互
@@ -149,6 +217,7 @@ const PRESETS = {
 
 function showModal(show) {
   $('#modal-app').classList.toggle('hidden', !show);
+  webdeck.setModalOpen(show).catch(() => {});
 }
 
 function openAddModal() {
@@ -156,6 +225,8 @@ function openAddModal() {
   $('#form-app').reset();
   $('#f-name').value = '';
   $('#f-url').value = '';
+  $('#f-icon-preset').value = '';
+  $('#f-icon').value = '';
   $('#f-timeoutSec').value = 30;
   $('#f-intervalSec').value = 5;
   $('#f-statusCode').value = 200;
@@ -176,6 +247,8 @@ function openEditModal() {
   $('#modal-app-title').textContent = '编辑应用';
   $('#f-name').value = app.name;
   $('#f-url').value = app.url;
+  $('#f-icon').value = app.icon ?? '';
+  $('#f-icon-preset').value = app.icon === 'icons/dsh.png' ? 'icons/dsh.png' : '';
   document.querySelector(`input[name="f-launch-mode"][value="${app.launch.mode}"]`).checked = true;
   $('#f-command').value = app.launch.command ?? '';
   $('#f-args').value = (app.launch.args ?? []).join('\n');
@@ -214,6 +287,7 @@ function collectForm() {
   return {
     name: $('#f-name').value.trim(),
     url: $('#f-url').value.trim(),
+    icon: $('#f-icon').value.trim(),
     startOnOpen: $('#f-startOnOpen').checked,
     launch: {
       mode,
@@ -235,6 +309,55 @@ function collectForm() {
   };
 }
 
+// ---------------------------------------------------------------- 主题
+
+function applyTheme(t) {
+  theme = t === 'light' ? 'light' : 'dark'; // 非法/缺失一律回退 dark
+  document.documentElement.dataset.theme = theme;
+  const btn = $('#tb-theme');
+  if (btn) {
+    btn.textContent = theme === 'dark' ? '🌙' : '☀️';
+    btn.title = theme === 'dark' ? '切换到浅色主题' : '切换到暗色主题';
+  }
+}
+
+async function toggleTheme() {
+  const next = theme === 'dark' ? 'light' : 'dark';
+  try {
+    const res = await webdeck.setTheme(next);
+    if (res?.ok) applyTheme(next);
+    else alert(`主题切换失败: ${res.error ?? '未知错误'}`);
+  } catch (err) {
+    alert(`主题切换失败: ${err.message ?? err}`);
+  }
+}
+
+// ---------------------------------------------------------------- 侧边栏收起/展开
+
+function applySidebarCollapsed(collapsed) {
+  sidebarCollapsed = !!collapsed;
+  document.body.classList.toggle('sidebar-collapsed', sidebarCollapsed);
+  const btn = $('#btn-collapse');
+  if (btn) {
+    btn.textContent = sidebarCollapsed ? '▶' : '◀';
+    btn.title = sidebarCollapsed ? '展开侧边栏 (⌘\\)' : '收起侧边栏 (⌘\\)';
+  }
+}
+
+async function toggleSidebar() {
+  const now = Date.now();
+  if (now - lastSidebarToggle < 200) return; // 菜单加速键与 keydown 双通道可能同时触发，防重复切换
+  lastSidebarToggle = now;
+  const next = !sidebarCollapsed;
+  try {
+    const res = await webdeck.setSidebarCollapsed(next);
+    if (res?.ok) applySidebarCollapsed(next);
+    else alert(`侧边栏切换失败: ${res.error ?? '未知错误'}`);
+  } catch (err) {
+    alert(`侧边栏切换失败: ${err.message ?? err}`);
+  }
+}
+
 // ---------------------------------------------------------------- 日志
 
 async function openLogs() {
@@ -243,6 +366,7 @@ async function openLogs() {
   $('#modal-logs-title').textContent = `启动日志 — ${app.name}`;
   $('#log-content').textContent = '（无日志，进程未启动或尚无输出）';
   $('#modal-logs').classList.toggle('hidden', false);
+  webdeck.setModalOpen(true).catch(() => {});
   clearInterval(logTimer);
   const refresh = async () => {
     const lines = await webdeck.getLogs(app.id);
@@ -258,18 +382,15 @@ function closeLogs() {
   clearInterval(logTimer);
   logTimer = null;
   $('#modal-logs').classList.add('hidden');
+  webdeck.setModalOpen(false).catch(() => {});
 }
 
 // ---------------------------------------------------------------- 事件绑定
 
 function bind() {
   $('#btn-add').addEventListener('click', openAddModal);
-  $('#tb-toggle').addEventListener('click', async () => {
-    if (!activeId) return;
-    const st = statusOf(activeId);
-    if (st === 'running' || st === 'starting') await webdeck.stopApp(activeId);
-    else await webdeck.startApp(activeId);
-  });
+  $('#btn-collapse').addEventListener('click', toggleSidebar);
+  $('#tb-toggle').addEventListener('click', () => { if (activeId) toggleAppProc(activeId); });
   $('#tb-reload').addEventListener('click', () => activeId && webdeck.reloadApp(activeId));
   $('#tb-external').addEventListener('click', () => {
     const app = apps.find((a) => a.id === activeId);
@@ -277,6 +398,7 @@ function bind() {
   });
   $('#tb-logs').addEventListener('click', openLogs);
   $('#tb-edit').addEventListener('click', openEditModal);
+  $('#tb-theme').addEventListener('click', toggleTheme);
 
   $('#btn-cancel').addEventListener('click', () => showModal(false));
   $('#btn-logs-close').addEventListener('click', closeLogs);
@@ -284,6 +406,11 @@ function bind() {
   $('#modal-logs').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeLogs(); });
 
   document.querySelectorAll('input[name="f-launch-mode"]').forEach((r) => r.addEventListener('change', syncLaunchFields));
+
+  // 内置图标快捷选择：选中即填入输入框，可再手动修改
+  $('#f-icon-preset').addEventListener('change', (e) => {
+    $('#f-icon').value = e.target.value || '';
+  });
 
   $('#f-preset').addEventListener('change', (e) => {
     const preset = PRESETS[e.target.value];
@@ -324,10 +451,21 @@ function bind() {
   });
   webdeck.onAppsChanged(() => refreshApps());
   webdeck.onAddAppRequest(openAddModal);
+  webdeck.onSidebarCollapsed(applySidebarCollapsed);
+  webdeck.onToggleSidebarRequest(() => toggleSidebar());
+  webdeck.onActivated(({ id, status }) => {
+    // 主进程激活（启动自动激活 / 菜单切换）后同步渲染层，避免工具栏/高亮停留在未选中态
+    if (status) {
+      statuses.set(id, status);
+      updateDot(id);
+    }
+    setActive(id);
+  });
 
   document.addEventListener('keydown', (e) => {
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key === 'n') { e.preventDefault(); openAddModal(); }
+    if (mod && e.key === '\\') { e.preventDefault(); toggleSidebar(); } // 壳 UI 聚焦时兜底；菜单加速键为主通道
     if (mod && !e.shiftKey && e.key >= '1' && e.key <= '9') {
       const idx = Number(e.key) - 1;
       const app = apps[idx];
@@ -345,4 +483,7 @@ function bind() {
 (async function init() {
   bind();
   await refreshApps();
+  const settings = await webdeck.getSettings().catch(() => ({}));
+  applyTheme(settings?.theme);
+  applySidebarCollapsed(settings?.sidebarCollapsed === true);
 })();

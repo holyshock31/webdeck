@@ -16,6 +16,14 @@ contextBridge.exposeInMainWorld('webdeck', {
   getLogs: (id) => ipcRenderer.invoke('app:logs', id),
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
 
+  // 全局设置（主题、侧边栏收起等）
+  getSettings: () => ipcRenderer.invoke('settings:get'),
+  setTheme: (theme) => ipcRenderer.invoke('settings:setTheme', theme),
+  setSidebarCollapsed: (collapsed) => ipcRenderer.invoke('settings:setSidebarCollapsed', collapsed),
+
+  // 弹窗状态（打开时隐藏 WebContentsView，避免遮挡模态框）
+  setModalOpen: (open) => ipcRenderer.invoke('ui:modal', open),
+
   // 事件订阅（返回取消函数）
   onStatus: (cb) => {
     const handler = (_e, payload) => cb(payload);
@@ -31,5 +39,20 @@ contextBridge.exposeInMainWorld('webdeck', {
     const handler = () => cb();
     ipcRenderer.on('ui:add-app', handler);
     return () => ipcRenderer.removeListener('ui:add-app', handler);
+  },
+  onActivated: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('apps:activated', handler);
+    return () => ipcRenderer.removeListener('apps:activated', handler);
+  },
+  onSidebarCollapsed: (cb) => {
+    const handler = (_e, collapsed) => cb(collapsed);
+    ipcRenderer.on('ui:sidebar-collapsed', handler);
+    return () => ipcRenderer.removeListener('ui:sidebar-collapsed', handler);
+  },
+  onToggleSidebarRequest: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on('ui:toggle-sidebar', handler);
+    return () => ipcRenderer.removeListener('ui:toggle-sidebar', handler);
   },
 });

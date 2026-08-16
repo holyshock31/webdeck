@@ -14,7 +14,10 @@
         <span class="brand-dot"></span>
         <span class="brand-name">WebDeck</span>
       </div>
-      <button id="btn-add" class="icon-btn" title="添加应用 (⌘N)">＋</button>
+      <div class="header-actions">
+        <button id="btn-add" class="icon-btn" title="添加应用 (⌘N)">＋</button>
+        <button id="btn-collapse" class="icon-btn" title="收起侧边栏 (⌘\)">◀</button>
+      </div>
     </header>
 
     <div id="toolbar">
@@ -23,6 +26,7 @@
       <button id="tb-external" class="icon-btn" title="在系统浏览器中打开">↗</button>
       <button id="tb-logs" class="icon-btn" title="查看启动日志">☰</button>
       <button id="tb-edit" class="icon-btn" title="编辑当前应用">✎</button>
+      <button id="tb-theme" class="icon-btn" title="切换到浅色主题">🌙</button>
     </div>
 
     <nav id="app-list"></nav>
@@ -60,6 +64,14 @@
         <div class="form-row">
           <label>URL *</label>
           <input id="f-url" type="text" placeholder="http://127.0.0.1:3080 或 https://…" required />
+        </div>
+        <div class="form-row">
+          <label>图标</label>
+          <select id="f-icon-preset">
+            <option value="">无（首字母色块）</option>
+            <option value="icons/dsh.png">DeepSeek（内置）</option>
+          </select>
+          <input id="f-icon" type="text" placeholder="或填写图标路径 / URL（留空 = 无）" />
         </div>
 
         <fieldset>

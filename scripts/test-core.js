@@ -75,6 +75,7 @@ console.log('== 测试 2: 进程停止 + 健康检查失败后状态 → stopped
   monitor.stop(app.id);
 }
 
+
 console.log('== 测试 3: 进程在跑但健康检查失败 → starting → error（超时） ==');
 {
   const app = {
@@ -122,6 +123,136 @@ console.log('== 测试 5: 配置校验（normalizeApp） ==');
   check('direct 无命令抛错', threw);
   const b = normalizeApp({ url: 'http://a', launch: { mode: 'shell', commandLine: 'echo hi' } });
   check('shell 模式保留', b.launch.mode === 'shell');
+}
+
+console.log('== 测试 6: 持久化往返（store + apps 集成，防回归） ==');
+{
+  const { createStore } = await import('../src/main/store.js');
+  const { createApps } = await import('../src/main/apps.js');
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'webdeck-test-'));
+  try {
+    // 每次「重启」都在同一目录新建 store + 注册表
+    const boot = async () => {
+      const store = createStore(tmpDir);
+      const reg = createApps(store);
+      await reg.load();
+      return { store, reg };
+    };
+
+    const { reg } = await boot();
+    const added = await reg.add({ name: '持久化测试', url: '127.0.0.1:3080' });
+    const raw = await fs.promises.readFile(path.join(tmpDir, 'webdeck.json'), 'utf8');
+    check('添加后已写盘', raw.includes(added.id), raw.slice(0, 80));
+
+    const { reg: reg2 } = await boot();
+    const afterRestart = reg2.list();
+    check('重启后应用仍在', afterRestart.length === 1 && afterRestart[0].name === '持久化测试',
+      JSON.stringify(afterRestart));
+
+    await reg2.update(added.id, { name: '改名后' });
+    const { reg: reg3, store: st3 } = await boot();
+    check('更新后持久化', reg3.list()[0]?.name === '改名后');
+
+    await st3.updateSettings({ lastActiveAppId: added.id }); // 恢复上次打开的应用
+    await reg3.add({ name: '第二个', url: 'http://127.0.0.1:9' }); // 再增删一次，settings 不应被冲掉
+    const { reg: reg4, store: st4 } = await boot();
+    check('settings 随增删保留', (await st4.load()).settings.lastActiveAppId === added.id,
+      JSON.stringify((await st4.load()).settings));
+
+    await reg4.remove(added.id);
+    const { reg: reg5 } = await boot();
+    check('删除后持久化', reg5.list().length === 1 && reg5.list()[0].name === '第二个');
+  } finally {
+    await fs.promises.rm(tmpDir, { recursive: true, force: true });
+  }
+}
+
+console.log('== 测试 7: 手动启动/停止幂等 + spawn 失败 tombstone + 重试 ==');
+{
+  const app7 = {
+    id: 't7', name: 'idem', url: 'http://127.0.0.1:9/',
+    launch: { mode: 'direct', command: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], timeoutMs: 5000 },
+    monitor: { enabled: true, url: 'http://127.0.0.1:9/', intervalSec: 1, expectedStatus: 200 },
+  };
+  registry.set(app7.id, app7);
+
+  // 未运行 stop → false（无害 no-op）
+  const r = await procs.stop(app7);
+  check('未运行的 stop 返回 false', r === false);
+
+  // 重复 launch 返回同一实例（幂等，不重复拉起）
+  const first = procs.launch(app7, () => {});
+  const again = procs.launch(app7, () => {});
+  check('重复 launch 返回同一实例', again === first && procs.info(app7.id) === first);
+  await procs.stop(app7);
+  await sleep(500);
+
+  // 退出回调只触发一次（正常退出）
+  const appQuick = {
+    id: 't7q', name: 'quick', url: 'http://127.0.0.1:9/',
+    launch: { mode: 'direct', command: process.execPath, args: ['-e', 'process.exit(0)'], timeoutMs: 5000 },
+    monitor: { enabled: false, url: 'http://127.0.0.1:9/', intervalSec: 1, expectedStatus: 200 },
+  };
+  registry.set(appQuick.id, appQuick);
+  let quickExits = 0;
+  const quickInfo = procs.launch(appQuick, () => { quickExits++; });
+  const t0 = Date.now();
+  while (Date.now() - t0 < 4000 && quickInfo.exitCode === null) await sleep(50);
+  await sleep(300);
+  check('正常退出的回调只触发一次', quickExits === 1, `exits=${quickExits}, code=${quickInfo.exitCode}`);
+  check('正常退出后条目已清理', procs.info(appQuick.id) === null);
+
+  // spawn 失败 → tombstone 保留 → 监测显示 error → 修正后重试成功
+  const appBad = {
+    id: 't7b', name: 'bad', url: 'http://127.0.0.1:9/',
+    launch: { mode: 'direct', command: '/nonexistent/webdeck-xyz', args: [], timeoutMs: 5000 },
+    monitor: { enabled: true, url: 'http://127.0.0.1:9/', intervalSec: 1, expectedStatus: 200 },
+  };
+  registry.set(appBad.id, appBad);
+  let badExits = 0;
+  procs.launch(appBad, () => { badExits++; });
+  let tomb = procs.info(appBad.id);
+  const t1 = Date.now();
+  while (Date.now() - t1 < 4000 && !(tomb && tomb.spawnError)) { await sleep(50); tomb = procs.info(appBad.id); }
+  check('spawn 失败后回调只触发一次', badExits === 1, `exits=${badExits}`);
+  check('spawn 失败 tombstone 保留', Boolean(tomb?.spawnError), JSON.stringify(tomb));
+  monitor.start(appBad);
+  const errSt = await waitStatus(appBad.id, 'error', 5000);
+  check('tombstone 下状态为 error', Boolean(errSt), JSON.stringify(statusLog.at(-1)));
+  check('error 详情含失败原因', errSt?.detail?.includes('进程启动失败'), errSt?.detail);
+  monitor.stop(appBad.id);
+  await procs.stop(appBad); // stop 清除 tombstone
+  check('stop 后 tombstone 清除', procs.info(appBad.id) === null);
+
+  // 修正命令后重试 → 成功
+  appBad.launch.command = process.execPath;
+  appBad.launch.args = ['-e', 'setInterval(()=>{},1000)'];
+  const retry = procs.launch(appBad, () => {});
+  check('重试拿到新进程（非 tombstone）', retry !== tomb && procs.info(appBad.id) === retry);
+  check('重试进程存活', procs.info(appBad.id)?.proc.exitCode === null);
+  await procs.stop(appBad);
+  await sleep(500);
+}
+
+console.log('== 测试 8: 启动前健康守卫（isHealthy：通过则不应再拉起实例） ==');
+{
+  const srv = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/plain' });
+    res.end('ok');
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${srv.address().port}`;
+  const healthyApp = { url, monitor: { enabled: true, url, intervalSec: 1, expectedStatus: 200, timeoutMs: 2000 } };
+  check('健康通过 → isHealthy=true', await monitor.isHealthy(healthyApp) === true);
+  const downApp = { url: 'http://127.0.0.1:9/', monitor: { enabled: true, url: 'http://127.0.0.1:9/', intervalSec: 1, expectedStatus: 200, timeoutMs: 2000 } };
+  check('健康失败 → isHealthy=false', await monitor.isHealthy(downApp) === false);
+  const offApp = { url, monitor: { enabled: false } };
+  check('监测未启用 → isHealthy=false（维持原行为）', await monitor.isHealthy(offApp) === false);
+  const wrongCodeApp = { url, monitor: { enabled: true, url, intervalSec: 1, expectedStatus: 404, timeoutMs: 2000 } };
+  check('状态码不匹配 → isHealthy=false', await monitor.isHealthy(wrongCodeApp) === false);
+  srv.close();
 }
 
 server.close();

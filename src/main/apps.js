@@ -67,6 +67,7 @@ export function normalizeApp(input, id) {
     id: id ?? randomUUID(),
     name: String(input.name ?? '').trim() || fullUrl,
     url: fullUrl,
+    icon: String(input.icon ?? '').trim(),  // 可选：图标（渲染层相对路径 / 绝对路径 / http(s) URL）
     launch,
     monitor,
     startOnOpen: input.startOnOpen !== false,
@@ -93,10 +94,16 @@ export function createApps(store) {
     return apps.find((a) => a.id === id) ?? null;
   }
 
+  /** 把当前应用数组 + settings 一起落盘（apps 数组与 store 缓存是不同引用，必须整体传）。 */
+  async function persist() {
+    const data = await store.load();
+    await store.save({ apps, settings: data.settings ?? {} });
+  }
+
   async function add(input) {
     const app = normalizeApp(input);
     apps.push(app);
-    await store.save();
+    await persist();
     return app;
   }
 
@@ -106,7 +113,7 @@ export function createApps(store) {
     if (idx < 0) throw new Error(`应用不存在: ${id}`);
     const app = normalizeApp({ ...apps[idx], ...input }, id);
     apps[idx] = app;
-    await store.save();
+    await persist();
     return app;
   }
 
@@ -114,12 +121,12 @@ export function createApps(store) {
     const idx = apps.findIndex((a) => a.id === id);
     if (idx < 0) return false;
     apps.splice(idx, 1);
-    await store.save();
+    await persist();
     return true;
   }
 
   function save() {
-    return store.save();
+    return persist();
   }
 
   return { load, list, get, add, update, remove, save };

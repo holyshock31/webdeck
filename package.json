@@ -7,7 +7,7 @@
   "main": "src/main/index.js",
   "private": true,
   "scripts": {
-    "start": "electron .",
+    "start": "bash scripts/dev-mac.sh",
     "smoke": "WEBDECK_SMOKE=1 electron .",
     "test": "node scripts/test-core.js"
   },

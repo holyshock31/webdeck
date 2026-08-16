@@ -26,17 +26,28 @@ export function createStore(baseDir) {
     return cache;
   }
 
-  function save() {
-    // 串行化写入 + 临时文件原子替换
+  /**
+   * 持久化数据。传 data 时写入该数据并同步内存缓存；不传时写入当前缓存。
+   * 写入串行化 + 临时文件原子替换。
+   * @param {{apps?: Array, settings?: object}} [data]
+   */
+  function save(data) {
+    // 在写队列中求值，保证读到的是最新数组内容（调用方可能在排队期间继续 push）
     writing = writing.then(async () => {
-      const data = cache ?? { apps: [], settings: {} };
+      const payload = data ?? cache;
       const tmp = `${file}.tmp`;
       await fs.mkdir(path.dirname(file), { recursive: true });
-      await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8');
+      await fs.writeFile(tmp, JSON.stringify(payload, null, 2), 'utf8');
       await fs.rename(tmp, file);
+      cache = payload; // 写盘后同步内存缓存，后续 load()/save() 基于最新数据
     }).catch((err) => console.error('[webdeck] store save failed:', err));
     return writing;
   }
 
-  return { load, save, file };
+  /** 只更新 settings 部分。 */
+  function updateSettings(patch) {
+    return save({ ...cache, settings: { ...cache.settings, ...patch } });
+  }
+
+  return { load, save, updateSettings, file };
 }

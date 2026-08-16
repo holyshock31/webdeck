@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="violet" x1="208" y1="230" x2="760" y2="704" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7257F6"/>
+      <stop offset="1" stop-color="#5A35DC"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="254" y1="300" x2="806" y2="774" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2EA7FF"/>
+      <stop offset="1" stop-color="#1768E9"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="304" y1="370" x2="856" y2="814" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#28313D"/>
+      <stop offset="1" stop-color="#171D26"/>
+    </linearGradient>
+    <filter id="tile-shadow" x="0" y="0" width="1024" height="1024" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#111827" flood-opacity="0.16"/>
+    </filter>
+    <filter id="card-shadow" x="150" y="180" width="780" height="700" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#0F172A" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+
+  <rect x="64" y="64" width="896" height="896" rx="220"
+        fill="#FBFBFA" stroke="#E6E8EB" stroke-width="16" filter="url(#tile-shadow)"/>
+
+  <g filter="url(#card-shadow)">
+    <rect x="208" y="230" width="552" height="474" rx="88" fill="url(#violet)"/>
+    <circle cx="276" cy="292" r="17" fill="#FFFFFF" fill-opacity="0.82"/>
+    <circle cx="326" cy="292" r="17" fill="#FFFFFF" fill-opacity="0.82"/>
+    <circle cx="376" cy="292" r="17" fill="#FFFFFF" fill-opacity="0.82"/>
+
+    <rect x="254" y="300" width="552" height="474" rx="88" fill="url(#blue)"/>
+    <circle cx="322" cy="362" r="17" fill="#FFFFFF" fill-opacity="0.88"/>
+    <circle cx="372" cy="362" r="17" fill="#FFFFFF" fill-opacity="0.88"/>
+    <circle cx="422" cy="362" r="17" fill="#FFFFFF" fill-opacity="0.88"/>
+
+    <rect x="304" y="370" width="552" height="444" rx="84" fill="url(#ink)"/>
+    <path d="M304 474H856" stroke="#667085" stroke-width="8"/>
+    <circle cx="792" cy="422" r="22" fill="#3EDC9A"/>
+    <circle cx="786" cy="416" r="7" fill="#A7F3D0" fill-opacity="0.72"/>
+
+    <path d="M392 562L462 724L512 620L566 724L660 562"
+          fill="none" stroke="#FFFFFF" stroke-width="86"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

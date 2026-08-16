@@ -13,8 +13,8 @@ WebDeck 目前仅在 macOS 上验证通过，核心的本地进程管理实现�
 
 ## What Changes
 
-- `src/main/process-manager.js` 平台抽象：POSIX 保持现状（detached 进程组 + SIGTERM 整组、2 秒后 SIGKILL）；win32 改用 `taskkill /pid <pid> /T`（必要时追加 `/F`）终止整棵进程树，taskkill 不可用或失败时回退 `child.kill`；`stop` 与 `stopMany` 都走平台分发
-- 所有 `spawn` 统一加 `windowsHide: true`，Windows 上不再弹出控制台窗口
+- `src/main/process-manager.js` 平台抽象：POSIX 保持现状（detached 进程组 + SIGTERM 整组、2 秒后 SIGKILL）；win32 改用 `taskkill /pid <pid> /T /F` 强制终止整棵进程树（`/F` 为必需：Windows 控制台进程无法温和终止，不带 `/F` 的 taskkill 对它们直接失败），taskkill 不可用或失败时回退 `child.kill`；`stop` 与 `stopMany` 都走平台分发
+- 所有 `spawn` 统一加 `windowsHide: true`，Windows 上不再弹出控制台窗口；`detached` 仅 POSIX 使用（Windows 上 `detached: true` 会破坏经 cmd.exe 启动的 node 子进程——不启动且无输出，已复现验证；且 Windows 终止走 taskkill 进程树、无需进程组语义）
 - Shell 模式默认 shell 按平台选择：win32 用 `process.env.ComSpec`（cmd.exe，`/d /s /c` 执行）；POSIX 维持 `$SHELL` 或 `/bin/zsh`
 - 开发态入口平台分发：`scripts/dev-mac.sh` 重命名为 `scripts/dev.sh`（逻辑不变：非 darwin 直接 `electron .`，macOS 保留改名 .app 副本逻辑），`package.json` 的 `start` 脚本与 README 相应更新
 - 内置预设按平台给默认命令：本地静态服务 macOS/Linux 用 `python3`、Windows 用 `python`；平台信息经 preload 桥暴露给渲染层
@@ -26,7 +26,7 @@ WebDeck 目前仅在 macOS 上验证通过，核心的本地进程管理实现�
 - **运行时行为**：macOS / Linux（POSIX）行为完全不变；Windows 获得可用的本地进程启动/终止语义（无控制台窗口、进程树可整树终止）
 - **模块边界**：`process-manager.js` 维持纯 Node 可单测约束；平台差异抽成可单测的纯函数（shell 解析、终止命令构造），测试不依赖真实平台
 - **兼容性**：无持久化 schema 变化、无 IPC 协议变化、无 UI 布局变化；应用配置完全兼容
-- **风险与已知平台差异**：Windows 的 `taskkill /T /F` 是强杀语义，与 macOS 的「SIGTERM 优雅退出 → 2 秒后 SIGKILL」二段式不同，接受为平台差异并写入文档；CI 首次接入可能需要调整 runner 环境（xvfb、Electron 二进制缓存复用）
+- **风险与已知平台差异**（均经 windows-latest 复现验证并写入文档）：Windows 的 `taskkill /T /F` 是强杀语义——控制台进程（cmd/node 等无窗口进程）无法温和终止，`/F` 必需，与 macOS 的「SIGTERM 优雅退出 → 2 秒后 SIGKILL」二段式不同；Windows 上不使用 `detached`（`detached: true` 会使经 cmd.exe 启动的 node 子进程不启动且无输出）；CI 首次接入可能需要调整 runner 环境（xvfb、Electron 二进制缓存复用）
 - **范围边界**：不做打包发布（另立 packaging-release 变更）、不做自动更新、不引入构建链；验收方式为三平台 CI 全绿 + Windows 手动验证清单
 
 ## Verification

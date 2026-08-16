@@ -4,7 +4,7 @@
 
 ### Requirement: 本地进程终止的平台适配
 
-停止本地进程与退出 WebDeck 清理进程时，按平台选择终止策略：POSIX（macOS / Linux）保持现状——向 detached 进程组发 SIGTERM、2 秒后仍存活则 SIGKILL；win32 使用 `taskkill /pid <pid> /T` 终止整棵进程树（必要时追加 `/F`），taskkill 不可用或失败时回退为直接 kill 子进程。两种平台下停止都不得遗留孤儿进程。
+停止本地进程与退出 WebDeck 清理进程时，按平台选择终止策略：POSIX（macOS / Linux）保持现状——向 detached 进程组发 SIGTERM、2 秒后仍存活则 SIGKILL；win32 使用 `taskkill /pid <pid> /T /F` 强制终止整棵进程树——`/F` 为必需而非可选：Windows 控制台进程（cmd/node 等无窗口进程）无法被温和终止，不带 `/F` 的 taskkill 对它们直接失败，若仅杀直接子进程会导致孙进程成为孤儿继续运行；taskkill 不可用或失败时回退为直接 kill 子进程。两种平台下停止都不得遗留孤儿进程。
 
 #### Scenario: Windows 上停止服务不遗留子进程
 
@@ -20,7 +20,7 @@
 
 ### Requirement: 本地进程启动的平台适配
 
-本地进程的 spawn 参数按平台适配：所有启动方式统一隐藏子进程控制台窗口（Windows 上不弹出黑色控制台窗口）；Shell 命令模式在 Windows 上使用 `process.env.ComSpec`（cmd.exe）以 `/d /s /c` 执行，在 POSIX 上维持 `$SHELL` 或 `/bin/zsh`。
+本地进程的 spawn 参数按平台适配：所有启动方式统一隐藏子进程控制台窗口（Windows 上不弹出黑色控制台窗口）；`detached` 仅 POSIX 使用——Windows 上 `detached: true` 会导致经 cmd.exe 启动的 node 子进程不启动且无输出（经 windows-latest 复现验证），且 Windows 终止走 taskkill 进程树、不需要进程组语义；Shell 命令模式在 Windows 上使用 `process.env.ComSpec`（cmd.exe）以 `/d /s /c` 执行，在 POSIX 上维持 `$SHELL` 或 `/bin/zsh`。
 
 #### Scenario: Windows 启动本地服务不弹控制台窗口
 

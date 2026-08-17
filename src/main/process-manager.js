@@ -108,6 +108,17 @@ export function winCmdSpawnOptions(base) {
   return { ...base, windowsVerbatimArguments: true };
 }
 
+/**
+ * 构造 cmd.exe /d /s /c 的 argv：末元素为**外层引号包裹**的命令行。
+ * cmd 的 /S 规则会剥掉首引号（`cmd /?`：/C 后整条以引号开头时剥第一个引号），
+ * 单层引号会使路径失去保护、命令名按空格拆分（`'C:\Program' is not recognized`，
+ * v0.1.6 链路日志实锤）；双层引号让 cmd 剥掉外层后内层引号完整保留——
+ * child_process.exec 与 npm cmd-shim 的标准做法。
+ */
+export function winCmdInvocationArgs(commandPath, args = []) {
+  return ['/d', '/s', '/c', `"${winCmdLine(commandPath, args)}"`];
+}
+
 /** 按平台选择 Shell 命令模式的默认 shell。win32 用 ComSpec（cmd.exe），POSIX 用 $SHELL 或 /bin/zsh。 */
 export function resolveShell(platform = process.platform, env = process.env) {
   if (platform === 'win32') return env.ComSpec || 'cmd.exe';
@@ -302,9 +313,9 @@ export function createProcessManager({ logSink } = {}) {
         return info;
       }
       if (resolved.type === 'cmd') {
-        // .cmd/.bat 等：经 cmd.exe /d /s /c 执行（参数按 cmd 规则转义；verbatim 原样传递，
-        // 避免 Node argv 序列化把引号转义为 \" 导致 cmd 报 is not recognized）
-        child = spawn(resolveShell(), [...shellArgs(), winCmdLine(resolved.path, args)], winCmdSpawnOptions(base));
+        // .cmd/.bat 等：经 cmd.exe /d /s /c 执行——verbatim 原样传递（防 argv 转义引号），
+        // 末元素外层引号包裹（cmd /S 剥外层后内层路径引号完整，防 'C:\Program' 拆分）
+        child = spawn(resolveShell(), winCmdInvocationArgs(resolved.path, args), winCmdSpawnOptions(base));
       } else {
         child = spawn(resolved.path, args, base);
       }

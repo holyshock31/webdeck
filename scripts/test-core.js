@@ -355,10 +355,20 @@ console.log('== 测试 9: 平台差异纯函数（跨平台适配，不依赖真
     check('winCmdLine 内部引号翻倍',
       winCmdLine('tool.cmd', ['say "hi"']) === 'tool.cmd "say ""hi"""');
     // windowsVerbatimArguments：cmd 分支 spawn 选项原样传递命令行（防 argv 序列化转义引号）
-    const { winCmdSpawnOptions } = await import('../src/main/process-manager.js');
+    const { winCmdSpawnOptions, winCmdInvocationArgs } = await import('../src/main/process-manager.js');
     const opts = winCmdSpawnOptions({ cwd: 'C:\\x', windowsHide: true });
     check('cmd 分支 spawn 含 windowsVerbatimArguments: true', opts.windowsVerbatimArguments === true);
     check('cmd 分支 spawn 保留 base 选项', opts.cwd === 'C:\\x' && opts.windowsHide === true);
+    // 双层引号：cmd /S 剥外层后内层路径引号完整（防 'C:\Program' 拆分）
+    check('winCmdInvocationArgs 双层引号（空格路径）',
+      JSON.stringify(winCmdInvocationArgs('C:\\Program Files\\nodejs\\dsh.cmd', ['--profile', 'web']))
+      === JSON.stringify(['/d', '/s', '/c', '""C:\\Program Files\\nodejs\\dsh.cmd" --profile web"']));
+    check('winCmdInvocationArgs 无参数形态',
+      JSON.stringify(winCmdInvocationArgs('C:\\tools\\tool.cmd'))
+      === JSON.stringify(['/d', '/s', '/c', '"C:\\tools\\tool.cmd"']));
+    check('winCmdInvocationArgs 内部引号翻倍保留',
+      JSON.stringify(winCmdInvocationArgs('tool.cmd', ['say "hi"']))
+      === JSON.stringify(['/d', '/s', '/c', '"tool.cmd "say ""hi""""']));
   } finally {
     await fs.promises.rm(fakeBin, { recursive: true, force: true });
   }

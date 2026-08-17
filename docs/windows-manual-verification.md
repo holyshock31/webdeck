@@ -74,3 +74,12 @@
 - [ ] 启动后立即退出的进程：日志面板「进程已退出 (code=N, 存活 Xms)」的存活时长与 `[exit]` 行一致，等待数秒后重开面板数值不变（冻结）
 - [ ] 带空格路径的 `.cmd` 直接命令（如 `C:\tools\my tool.cmd`）：启动成功，路径引号不被转义破坏
 - [ ] npm test 与 npm run smoke 三平台 CI 全绿
+
+---
+
+## cmd 双层引号修复（fix-win-cmd-invocation，v0.1.7 起）
+
+- [ ] 直接命令 `dsh --profile web`（命中 `dsh.cmd`）：启动成功，健康检查通过状态变绿——不再报 `'C:\Program' is not recognized`
+- [ ] 日志面板 `[spawn]` 链节显示双层引号形态（`argv=... ""C:\Program Files\nodejs\dsh.cmd" --profile web"`）
+- [ ] 带空格路径的 `.cmd` 直接命令（如 `C:\tools\my tool.cmd`）：启动成功
+- [ ] npm test 与 npm run smoke 三平台 CI 全绿

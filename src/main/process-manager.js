@@ -167,7 +167,18 @@ export function createProcessManager() {
     child.stderr?.on('data', (c) => pushLog(info, c));
     child.on('error', (err) => {
       info.spawnError = err.message;
-      pushLog(info, Buffer.from(`[spawn error] ${err.message}\n`));
+      // 诊断上下文：命令全文 / cwd / PATH，Windows 上 ENOENT（找不到命令）时据此定位
+      // PATH 解析问题（GUI 启动的应用 PATH 快照可能与终端不同）。
+      const cmdLine = opts.mode === 'shell'
+        ? `${shell} ${shellArgs().join(' ')} ${opts.commandLine}`
+        : `${opts.command} ${Array.isArray(opts.args) ? opts.args.filter(Boolean).join(' ') : ''}`;
+      const pathSnippet = (env.PATH ?? '').slice(0, 600);
+      pushLog(info, Buffer.from(
+        `[spawn error] ${err.message}\n` +
+        `  command: ${cmdLine}\n` +
+        `  cwd: ${cwd ?? process.cwd()}\n` +
+        `  PATH: ${pathSnippet}${(env.PATH ?? '').length > 600 ? '…' : ''}\n`,
+      ));
       // 保留 tombstone（不删条目）：监测层据此显示 error，且再次 launch 可直接重试
       notify(app.id, info);
     });

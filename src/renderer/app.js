@@ -414,6 +414,10 @@ function updBanner(text, btnText, btnCb) {
 function hideUpdBanner() {
   $('#update-banner').classList.add('hidden');
 }
+// 下载中提示条的「取消」按钮显隐（仅 download_progress 期间可见）
+function setCancelBtnVisible(visible) {
+  $('#update-banner-cancel').classList.toggle('hidden', !visible);
+}
 
 function openUpdateModal() {
   const actions = $('#modal-update-actions');
@@ -468,6 +472,7 @@ function initUpdater() {
     switch (ev.type) {
       case 'available':
         updState = { ...updState, available: true, info: ev.info ?? ev, progress: null };
+        setCancelBtnVisible(false);
         updBanner(`发现新版本${ev.version ? ' v' + ev.version : ''}`, '查看', openUpdateModal);
         break;
       case 'not_available':
@@ -475,21 +480,36 @@ function initUpdater() {
         break;
       case 'download_progress':
         updState.progress = ev.percent ?? 0;
+        setCancelBtnVisible(true);
         updBanner(`正在下载更新… ${Math.round(updState.progress)}%`, '查看', openUpdateModal);
+        break;
+      case 'cancelled':
+        // 下载被取消（用户点「取消」/关机保护）：清进度并收起提示条，更新仍可用可重查
+        updState = { ...updState, progress: null, downloaded: false };
+        setCancelBtnVisible(false);
+        hideUpdBanner();
         break;
       case 'downloaded':
         updState = { ...updState, downloaded: true, available: true, progress: 100 };
+        setCancelBtnVisible(false);
         updBanner('新版本已就绪，可立即安装', '立即安装', () => webdeck.quitAndInstall());
         if (manualCheck) openUpdateModal();
         manualCheck = false;
         break;
       case 'error':
+        setCancelBtnVisible(false);
         if (manualCheck) { alert(`更新失败：${ev.message ?? '未知错误'}`); manualCheck = false; }
         break;
       default: break;
     }
   });
   $('#update-banner-close').addEventListener('click', hideUpdBanner);
+  // 「取消」按钮：经 IPC 中止进行中的下载（electron-updater 随后广播 cancelled 事件）
+  $('#update-banner-cancel').addEventListener('click', () => {
+    setCancelBtnVisible(false);
+    hideUpdBanner();
+    webdeck.cancelDownload().catch(() => {});
+  });
   $('#modal-update').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeUpdateModal(); });
 }
 

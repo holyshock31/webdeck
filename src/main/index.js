@@ -819,7 +819,10 @@ app.whenReady().then(async () => {
 
   for (const appCfg of apps.list()) monitor.start(appCfg);
 
-  updater = createUpdater({ getWindow: () => win });
+  updater = createUpdater({
+    getWindow: () => win,
+    logSink: (line) => fileLog.log(line), // 更新事件（检查/下载/安装/错误）落盘 webdeck.log
+  });
   updater.registerIpc();
   updater.start(); // 打包版（非 portable）启动自动更新检查调度
 

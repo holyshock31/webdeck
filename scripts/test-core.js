@@ -458,6 +458,28 @@ console.log('== 测试 11: 更新调度纯函数（退避/抖动/portable 判定
   check('portable 判定默认 false', isPortableEnv() === false);
 }
 
+console.log('== 测试 11b: 更新加固纯函数（installDirectory 对齐 / 进度落盘节流） ==');
+{
+  const { installDirectoryFor, shouldLogProgress } = await import('../src/main/updater-policy.js');
+  // Windows 打包态：安装目录对齐当前 exe 目录（防自定义安装目录双实例）
+  check('win32 打包态对齐 exe 目录',
+    installDirectoryFor('win32', true, 'D:\\Apps\\WebDeck\\WebDeck.exe') === 'D:\\Apps\\WebDeck',
+    JSON.stringify(installDirectoryFor('win32', true, 'D:\\Apps\\WebDeck\\WebDeck.exe')));
+  check('win32 打包态顶层安装目录', installDirectoryFor('win32', true, 'C:\\WebDeck.exe') === 'C:\\');
+  // 开发态（exe = electron 二进制）与非 Windows 平台跳过对齐
+  check('win32 开发态返回 null（跳过）', installDirectoryFor('win32', false, '/dev/electron') === null);
+  check('macOS 返回 null（不适用）',
+    installDirectoryFor('darwin', true, '/Applications/WebDeck.app/Contents/MacOS/WebDeck') === null);
+  check('无 exe 路径返回 null', installDirectoryFor('win32', true, '') === null);
+  // 下载进度落盘节流：跨 0/25/50/75/100 里程碑才记录，防高频 progress 刷日志
+  check('首个进度事件记录（0% 里程碑）', shouldLogProgress(3, -1) === true);
+  check('同里程碑内不重复记录', shouldLogProgress(24, 3) === false);
+  check('跨 25% 里程碑记录', shouldLogProgress(25, 3) === true);
+  check('跨 50% 里程碑记录', shouldLogProgress(51, 25) === true);
+  check('100% 记录（下载完成）', shouldLogProgress(100, 75) === true);
+  check('进度回退不记录', shouldLogProgress(40, 50) === false);
+}
+
 console.log('== 测试 12: 页内查找会话状态机（find.js 纯函数） ==');
 {
   const { createFindSession } = await import('../src/main/find.js');

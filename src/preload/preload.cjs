@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('webdeck', {
   // 更新（electron-updater）
   checkUpdate: () => ipcRenderer.invoke('updater:check'),
   quitAndInstall: () => ipcRenderer.invoke('updater:quit-install'),
+  cancelDownload: () => ipcRenderer.invoke('updater:cancel'),
   openDownloadPage: () => ipcRenderer.invoke('updater:open-download'),
 
   // 事件订阅（返回取消函数）

@@ -1,6 +1,6 @@
 // process-manager.js — 本地命令启动/停止/日志缓冲（纯 Node，无 Electron 依赖，可单测）
 // 平台差异集中在本文件：POSIX（macOS/Linux）用进程组信号；win32 用 taskkill 终止进程树。
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,6 +8,35 @@ import path from 'node:path';
 const MAX_LOG_LINES = 400;
 
 // ---------------------------------------------------------------- 平台差异纯函数（可单测）
+
+/**
+ * 从 Windows 注册表读取合并后的系统+用户 PATH（HKLM + HKCU），展开 %VAR%。
+ * GUI 应用由 explorer 启动时，超长 PATH 可能被整体丢弃（process.env.PATH 为空），
+ * 此时注册表是唯一可靠来源；cmd 终端从注册表实时合并所以正常。
+ * 非 win32 或读取失败返回 null。
+ */
+export function readRegistryPath(env = process.env) {
+  if (process.platform !== 'win32') return null;
+  try {
+    const query = (key) => {
+      const r = spawnSync('reg', ['query', key, '/v', 'Path'], { windowsHide: true, encoding: 'utf8' });
+      if (r.status !== 0) return null;
+      const m = String(r.stdout).match(/^\s*Path\s+REG_(?:EXPAND_)?SZ\s+(.+)$/m);
+      return m ? m[1].trim() : null;
+    };
+    const sys = query('HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment');
+    const user = query('HKCU\\Environment');
+    const merged = [sys, user].filter(Boolean).join(';');
+    if (!merged) return null;
+    const known = {
+      SystemRoot: 'C:\\Windows',
+      windir: 'C:\\Windows',
+      ProgramFiles: 'C:\\Program Files',
+      'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+    };
+    return merged.replace(/%([^%]+)%/g, (m, name) => env[name] || known[name] || m);
+  } catch { return null; }
+}
 
 /** 按平台选择 Shell 命令模式的默认 shell。win32 用 ComSpec（cmd.exe），POSIX 用 $SHELL 或 /bin/zsh。 */
 export function resolveShell(platform = process.platform, env = process.env) {
@@ -36,6 +65,7 @@ export function resolveEnvPath(platform = process.platform, env = process.env, h
     const roaming = strip(env.APPDATA || '');
     const user = strip(env.USERPROFILE || home);
     bins.push(
+      'C:\\Program Files\\nodejs',              // npm 全局 prefix 常见位置（dsh.cmd 等）
       local ? `${local}\\pnpm` : '',
       roaming ? `${roaming}\\npm` : '',
       `${user}\\.local\\bin`,
@@ -129,6 +159,12 @@ export function createProcessManager() {
 
     const opts = app.launch;
     const env = { ...process.env, ...(opts.env ?? {}) };
+    if (process.platform === 'win32' && !(env.PATH ?? '').trim()) {
+      // Windows GUI 应用由 explorer 启动，超长 PATH 可能被整体丢弃（process.env.PATH 为空，
+      // 典型症状：cmd 里能跑的命令 GUI 应用里 ENOENT）——从注册表合并系统+用户 PATH 兜底
+      const regPath = readRegistryPath(env);
+      if (regPath) env.PATH = regPath;
+    }
     // GUI 启动（打包版）PATH 不完整：补全常见用户 bin 目录，保证 pnpm/node 等命令可解析
     env.PATH = resolveEnvPath(process.platform, env, os.homedir());
     const cwd = opts.cwd?.trim() ? opts.cwd.trim() : undefined;

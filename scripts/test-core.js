@@ -296,6 +296,8 @@ console.log('== 测试 9: 平台差异纯函数（跨平台适配，不依赖真
   const pw = resolveEnvPath('win32', { PATH: 'C:\\Windows', LOCALAPPDATA: 'C:\\Users\\t\\AppData\\Local', APPDATA: 'C:\\Users\\t\\AppData\\Roaming' }, 'C:\\Users\\t');
   check('win32 PATH 补入 pnpm/npm 目录',
     pw.includes('C:\\Users\\t\\AppData\\Local\\pnpm') && pw.includes('C:\\Users\\t\\AppData\\Roaming\\npm'));
+  check('win32 PATH 补入 nodejs（npm 全局 prefix）', pw.includes('C:\\Program Files\\nodejs'));
+  check('readRegistryPath 非 win32 返回 null（不触碰 reg）', (await import('../src/main/process-manager.js')).readRegistryPath() === null);
 }
 
 server.close();

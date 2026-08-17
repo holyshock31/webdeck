@@ -27,6 +27,11 @@ contextBridge.exposeInMainWorld('webdeck', {
   // 弹窗状态（打开时隐藏 WebContentsView，避免遮挡模态框）
   setModalOpen: (open) => ipcRenderer.invoke('ui:modal', open),
 
+  // 更新（electron-updater）
+  checkUpdate: () => ipcRenderer.invoke('updater:check'),
+  quitAndInstall: () => ipcRenderer.invoke('updater:quit-install'),
+  openDownloadPage: () => ipcRenderer.invoke('updater:open-download'),
+
   // 事件订阅（返回取消函数）
   onStatus: (cb) => {
     const handler = (_e, payload) => cb(payload);
@@ -57,5 +62,15 @@ contextBridge.exposeInMainWorld('webdeck', {
     const handler = () => cb();
     ipcRenderer.on('ui:toggle-sidebar', handler);
     return () => ipcRenderer.removeListener('ui:toggle-sidebar', handler);
+  },
+  onCheckUpdateRequest: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on('ui:check-update', handler);
+    return () => ipcRenderer.removeListener('ui:check-update', handler);
+  },
+  onUpdaterEvent: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('updater:event', handler);
+    return () => ipcRenderer.removeListener('updater:event', handler);
   },
 });

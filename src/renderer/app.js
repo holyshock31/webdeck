@@ -398,6 +398,101 @@ function closeLogs() {
   webdeck.setModalOpen(false).catch(() => {});
 }
 
+// ---------------------------------------------------------------- 更新（electron-updater）
+
+// 更新状态：available / downloading(progress) / downloaded / error / 空闲
+let updState = { available: false, downloaded: false, progress: null, info: null, error: null };
+let manualCheck = false; // 手动检查标志：仅手动场景才提示"已是最新"/错误
+
+function updBanner(text, btnText, btnCb) {
+  $('#update-banner-text').textContent = text;
+  const btn = $('#update-banner-btn');
+  btn.textContent = btnText;
+  btn.onclick = btnCb;
+  $('#update-banner').classList.remove('hidden');
+}
+function hideUpdBanner() {
+  $('#update-banner').classList.add('hidden');
+}
+
+function openUpdateModal() {
+  const actions = $('#modal-update-actions');
+  actions.innerHTML = '';
+  const body = $('#modal-update-body');
+  const info = updState.info ?? {};
+  const version = info.version ? ` v${info.version}` : '';
+  if (updState.downloaded) {
+    $('#modal-update-title').textContent = `新版本${version}已就绪`;
+    body.textContent = '更新包已下载完成，安装后应用将自动重启。';
+    const later = document.createElement('button');
+    later.type = 'button'; later.className = 'btn'; later.textContent = '稍后';
+    later.onclick = () => { updState = { ...updState, downloaded: false }; closeUpdateModal(); };
+    const install = document.createElement('button');
+    install.type = 'button'; install.className = 'btn btn-primary'; install.textContent = '立即安装';
+    install.onclick = () => webdeck.quitAndInstall();
+    actions.append(later, install);
+  } else {
+    $('#modal-update-title').textContent = `发现新版本${version}`;
+    body.textContent = info.releaseNotes && info.releaseNotes !== 'null'
+      ? String(info.releaseNotes).replace(/<!--LANG:[\s\S]*?-->|<!--LANG:END-->/g, '')
+      : `有新版本${version}可用。`;
+    const close = document.createElement('button');
+    close.type = 'button'; close.className = 'btn'; close.textContent = '关闭';
+    close.onclick = closeUpdateModal;
+    const download = document.createElement('button');
+    download.type = 'button'; download.className = 'btn btn-primary';
+    download.textContent = '打开下载页';
+    download.onclick = () => webdeck.openDownloadPage();
+    actions.append(close, download);
+  }
+  $('#modal-update').classList.remove('hidden');
+  webdeck.setModalOpen(true).catch(() => {});
+}
+function closeUpdateModal() {
+  $('#modal-update').classList.add('hidden');
+  webdeck.setModalOpen(false).catch(() => {});
+}
+
+async function doCheckUpdate() {
+  manualCheck = true;
+  const res = await webdeck.checkUpdate();
+  if (!res.ok) {
+    alert(`检查更新失败：${res.error}`);
+    manualCheck = false;
+  }
+}
+
+function initUpdater() {
+  webdeck.onCheckUpdateRequest(() => doCheckUpdate());
+  webdeck.onUpdaterEvent((ev) => {
+    switch (ev.type) {
+      case 'available':
+        updState = { ...updState, available: true, info: ev.info ?? ev, progress: null };
+        updBanner(`发现新版本${ev.version ? ' v' + ev.version : ''}`, '查看', openUpdateModal);
+        break;
+      case 'not_available':
+        if (manualCheck) { alert('已是最新版本'); manualCheck = false; }
+        break;
+      case 'download_progress':
+        updState.progress = ev.percent ?? 0;
+        updBanner(`正在下载更新… ${Math.round(updState.progress)}%`, '查看', openUpdateModal);
+        break;
+      case 'downloaded':
+        updState = { ...updState, downloaded: true, available: true, progress: 100 };
+        updBanner('新版本已就绪，可立即安装', '立即安装', () => webdeck.quitAndInstall());
+        if (manualCheck) openUpdateModal();
+        manualCheck = false;
+        break;
+      case 'error':
+        if (manualCheck) { alert(`更新失败：${ev.message ?? '未知错误'}`); manualCheck = false; }
+        break;
+      default: break;
+    }
+  });
+  $('#update-banner-close').addEventListener('click', hideUpdBanner);
+  $('#modal-update').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeUpdateModal(); });
+}
+
 // ---------------------------------------------------------------- 事件绑定
 
 function bind() {
@@ -495,6 +590,7 @@ function bind() {
 
 (async function init() {
   bind();
+  initUpdater();
   await refreshApps();
   const settings = await webdeck.getSettings().catch(() => ({}));
   applyTheme(settings?.theme);

@@ -1,7 +1,7 @@
 {
   "name": "webdeck",
   "productName": "WebDeck",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "通用桌面网页包装器：通过 URL 添加应用，支持本地命令启动方式与健康监测。跨平台（macOS / Windows / Linux）。",
   "type": "module",
   "main": "src/main/index.js",
@@ -17,7 +17,8 @@
   },
   "devDependencies": {
     "electron": "^37.0.0",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "electron-updater": "^6.8.9"
   },
   "build": {
     "appId": "com.webdeck.app",
@@ -32,6 +33,11 @@
     ],
     "directories": {
       "output": "dist"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "holyshock31",
+      "repo": "webdeck"
     },
     "mac": {
       "icon": "assets/icon.icns",

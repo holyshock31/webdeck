@@ -111,6 +111,12 @@ git tag v0.2.0 && git push origin v0.2.0
 
 本地构建（验证配置用）：`npm run dist`（当前平台）、`npm run dist:mac` / `dist:win` / `dist:linux`，产物在 `dist/`。
 
+### 自动更新
+
+- **Windows 安装版**：内置自动更新（electron-updater）——启动后自动检查（约每 6 小时，失败自动退避重试），发现新版本自动下载并提示，**用户点击"立即安装"才执行**（退出应用不自动安装）；也可通过菜单「帮助 → 检查更新…」手动检查
+- **macOS / portable 版**：检测到新版本时提示并引导**打开 Releases 下载页**手动下载（macOS 自动更新依赖签名，未签名版本不做自动安装）
+- 更新元数据（`latest*.yml`）随每次发布自动上传到 GitHub Releases
+
 ### 签名决策（当前：macOS 未签名 / Windows 未签名）
 
 - **macOS**：Developer ID 签名 + 公证需要 Apple Developer 账号（$99/年）与 App 专用密码。未配置时构建出的产物带 `-unsigned` 标记，首次打开会被 Gatekeeper 拦截——绕过方法见下方常见问题。配置方式：仓库 secrets 设 `CSC_LINK` / `CSC_KEY_PASSWORD`（证书）与 `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`（公证），CI 检测到后自动签名 + 公证

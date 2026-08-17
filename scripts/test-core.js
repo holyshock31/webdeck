@@ -443,6 +443,21 @@ console.log('== 测试 10: 启动链路日志 + 退出 tombstone 生命周期 + 
   }
 }
 
+console.log('== 测试 11: 更新调度纯函数（退避/抖动/portable 判定） ==');
+{
+  const { computeBackoff, nextCheckDelay, isPortableEnv, CHECK_INTERVAL_MS, RETRY_BASE_MS, RETRY_MAX_MS } = await import('../src/main/updater-policy.js');
+  check('退避基数 5min', computeBackoff(RETRY_BASE_MS, RETRY_MAX_MS, 1) === 5 * 60 * 1000);
+  check('退避翻倍（第 2 次 10min）', computeBackoff(RETRY_BASE_MS, RETRY_MAX_MS, 2) === 10 * 60 * 1000);
+  check('退避封顶 60min', computeBackoff(RETRY_BASE_MS, RETRY_MAX_MS, 10) === 60 * 60 * 1000);
+  check('抖动区间 ±15%（rand=0 → -15%）',
+    nextCheckDelay(CHECK_INTERVAL_MS, () => 0) === Math.round(CHECK_INTERVAL_MS * 0.85));
+  check('抖动区间 ±15%（rand=1 → +15%）',
+    nextCheckDelay(CHECK_INTERVAL_MS, () => 1) === Math.round(CHECK_INTERVAL_MS * 1.15));
+  check('抖动区间 ±15%（rand=0.5 → 原值）',
+    nextCheckDelay(CHECK_INTERVAL_MS, () => 0.5) === CHECK_INTERVAL_MS);
+  check('portable 判定默认 false', isPortableEnv() === false);
+}
+
 server.close();
 console.log(failures === 0 ? '\n✅ 全部通过' : `\n❌ ${failures} 个断言失败`);
 process.exit(failures === 0 ? 0 : 1);

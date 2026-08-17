@@ -296,3 +296,24 @@ legend {
   user-select: text;
   color: var(--log-text);
 }
+
+/* 更新提示条与更新弹窗 */
+.update-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--bg-pop);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow, 0 4px 16px rgba(0, 0, 0, .35));
+  font-size: 13px;
+}
+.update-banner.hidden { display: none; }
+.btn-sm { padding: 2px 10px; font-size: 12px; }
+.update-body { white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow: auto; user-select: text; }

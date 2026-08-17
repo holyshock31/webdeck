@@ -7,6 +7,7 @@ import { createApps } from './apps.js';
 import { createProcessManager } from './process-manager.js';
 import { createMonitor } from './monitor.js';
 import { createFileLogger } from './file-logger.js';
+import { createUpdater } from './updater.js';
 
 // 应用身份声明：直接 `electron .` 开发态运行时，进程/任务栏身份默认取自 Electron
 // 二进制。这里显式声明项目名（Windows 任务栏与通知按 AppUserModelID 归属；
@@ -32,6 +33,7 @@ let procs = null;
 let monitor = null;
 let store = null;
 let fileLog = null;            // 落盘日志（userData/logs/webdeck.log），GUI 打包版查看链路日志的途径
+let updater = null;            // 更新服务（electron-updater 封装，打包版自动检查）
 const views = new Map();     // appId -> WebContentsView
 const statuses = new Map();  // appId -> { status, detail, updatedAt }
 let activeId = null;
@@ -279,6 +281,16 @@ function buildMenu() {
     },
     { label: '应用', submenu: appsMenu },
     { label: '窗口', submenu: [{ role: 'minimize' }, { role: 'zoom' }, ...(isMac ? [] : [{ role: 'close' }])] },
+    {
+      label: '帮助',
+      submenu: [
+        { role: 'about' },
+        {
+          label: '检查更新…',
+          click: () => win?.webContents.send('ui:check-update'),
+        },
+      ],
+    },
   ];
   return Menu.buildFromTemplate(template);
 }
@@ -635,6 +647,10 @@ app.whenReady().then(async () => {
   });
 
   for (const appCfg of apps.list()) monitor.start(appCfg);
+
+  updater = createUpdater({ getWindow: () => win });
+  updater.registerIpc();
+  updater.start(); // 打包版（非 portable）启动自动更新检查调度
 
   registerIpc(); // 先注册 IPC，渲染进程加载后会立即调用
   dbg('ready: ipc registered');

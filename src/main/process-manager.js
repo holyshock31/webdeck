@@ -10,6 +10,26 @@ const MAX_LOG_LINES = 400;
 // ---------------------------------------------------------------- 平台差异纯函数（可单测）
 
 /**
+ * 展开字符串中的 %VAR%（大小写不敏感）：优先查 env（忽略大小写），再查 known 映射
+ * （含常见系统变量大小写变体），未知名保留原样。注册表 REG_EXPAND_SZ 值（如
+ * `%appdata%\npm`、`%SYSTEMROOT%\System32\...`）展开用。
+ */
+export function expandEnvVars(str, env = process.env, known = {}) {
+  const fallback = {
+    SystemRoot: 'C:\\Windows', SYSTEMROOT: 'C:\\Windows',
+    windir: 'C:\\Windows', WINDIR: 'C:\\Windows',
+    ProgramFiles: 'C:\\Program Files', PROGRAMFILES: 'C:\\Program Files',
+    'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+  };
+  return String(str).replace(/%([^%]+)%/g, (m, name) => {
+    const envKey = Object.keys(env).find((k) => k.toLowerCase() === name.toLowerCase());
+    if (envKey !== undefined && env[envKey] !== undefined && env[envKey] !== '') return env[envKey];
+    return known[name] ?? known[name.toUpperCase()] ?? known[name.toLowerCase()]
+      ?? fallback[name] ?? fallback[name.toUpperCase()] ?? fallback[name.toLowerCase()] ?? m;
+  });
+}
+
+/**
  * 从 Windows 注册表读取合并后的系统+用户 PATH（HKLM + HKCU），展开 %VAR%。
  * GUI 应用由 explorer 启动时，超长 PATH 可能被整体丢弃（process.env.PATH 为空），
  * 此时注册表是唯一可靠来源；cmd 终端从注册表实时合并所以正常。
@@ -28,14 +48,54 @@ export function readRegistryPath(env = process.env) {
     const user = query('HKCU\\Environment');
     const merged = [sys, user].filter(Boolean).join(';');
     if (!merged) return null;
-    const known = {
-      SystemRoot: 'C:\\Windows',
-      windir: 'C:\\Windows',
-      ProgramFiles: 'C:\\Program Files',
-      'ProgramFiles(x86)': 'C:\\Program Files (x86)',
-    };
-    return merged.replace(/%([^%]+)%/g, (m, name) => env[name] || known[name] || m);
+    return expandEnvVars(merged, env);
   } catch { return null; }
+}
+
+/**
+ * Windows 直接命令解析：按 PATH 顺序 + PATHEXT 查找可执行文件。
+ * 关键：**只按 PATHEXT 扩展名拼接查找**，跳过无扩展名文件——npm 等工具生成的
+ * 无扩展名 shim（如 `nodejs\dsh`）会让 libuv 原样命中后 CreateProcess 失败并
+ * 直接报 ENOENT，永不继续尝试 `dsh.cmd`（诊断脚本已复现）。
+ * @param {string} command 直接命令（可含路径或扩展名）
+ * @param {object} env 环境（PATH/PATHEXT）
+ * @param {string} baseCwd 相对路径解析基准（默认 process.cwd()）
+ * @returns {{status:'ok', type:'exe'|'cmd', path:string, attempts:string[]} | {status:'notfound', attempts:string[]}}
+ */
+export function resolveWinCommand(command, env = process.env, baseCwd = process.cwd()) {
+  const pathext = (env.PATHEXT || '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC')
+    .split(';').map((s) => s.trim().toLowerCase()).filter((s) => s.startsWith('.') && s.length > 1);
+  const hasSep = command.includes('\\') || command.includes('/');
+  const dirs = hasSep
+    ? ['']
+    : [baseCwd, ...(env.PATH ?? '').split(';').map((s) => s.trim()).filter(Boolean)];
+  const hasExt = path.extname(command) !== '';
+  const attempts = [];
+  for (const dir of dirs) {
+    const base = hasSep ? command : path.join(dir, command);
+    const candidates = hasExt ? [base] : pathext.map((e) => base + e);
+    for (const candidate of candidates) {
+      attempts.push(candidate);
+      try {
+        if (fs.statSync(candidate).isFile()) {
+          const ext = path.extname(candidate).toLowerCase();
+          return {
+            status: 'ok',
+            type: ext === '.exe' || ext === '.com' ? 'exe' : 'cmd',
+            path: candidate,
+            attempts,
+          };
+        }
+      } catch { /* 不存在/不可访问，继续下一个候选 */ }
+    }
+  }
+  return { status: 'notfound', attempts };
+}
+
+/** 组装 cmd.exe 命令行（/d /s /c 用）：路径与含特殊字符/空格的参数加引号，内部引号按 cmd 规则翻倍。 */
+export function winCmdLine(commandPath, args = []) {
+  const quote = (s) => (/[\s"&|<>^%]/.test(s) ? `"${String(s).replace(/"/g, '""')}"` : String(s));
+  return [quote(commandPath), ...args.map(quote)].join(' ');
 }
 
 /** 按平台选择 Shell 命令模式的默认 shell。win32 用 ComSpec（cmd.exe），POSIX 用 $SHELL 或 /bin/zsh。 */
@@ -171,13 +231,62 @@ export function createProcessManager() {
     const stdio = ['ignore', 'pipe', 'pipe'];
     // windowsHide: 所有平台统一隐藏子进程控制台窗口（Windows 上避免每次启动闪黑窗）
     const base = { cwd, env, detached: spawnDetached(), windowsHide: true, stdio };
+    const args = Array.isArray(opts.args) ? opts.args.filter(Boolean) : [];
+
+    // 退出回调每个生命周期只触发一次（error/exit 只通知最先发生的；解析失败分支直接调用）
+    const notify = (id, inf) => {
+      if (inf.notified) return;
+      inf.notified = true;
+      onExit?.(id, inf);
+    };
+
+    const pathSnippet = (env.PATH ?? '').slice(0, 600);
+    const diagTail = (env.PATH ?? '').length > 600 ? '…' : '';
+    const logSpawnError = (info, msg, extra = '') => {
+      const cmdLine = opts.mode === 'shell'
+        ? `${resolveShell()} ${shellArgs().join(' ')} ${opts.commandLine}`
+        : `${opts.command} ${args.join(' ')}`;
+      pushLog(info, Buffer.from(
+        `[spawn error] ${msg}\n` +
+        `  command: ${cmdLine}\n` +
+        `  cwd: ${cwd ?? process.cwd()}\n` +
+        `  PATH: ${pathSnippet}${diagTail}\n` +
+        extra,
+      ));
+    };
 
     let child;
     if (opts.mode === 'shell') {
       const shell = resolveShell();
       child = spawn(shell, [...shellArgs(), opts.commandLine], base);
+    } else if (process.platform === 'win32') {
+      // 直接命令：自实现解析（跳过无扩展名 shim，.cmd/.bat 经 cmd.exe 执行）
+      const resolved = resolveWinCommand(opts.command, env, cwd ?? process.cwd());
+      if (resolved.status !== 'ok') {
+        const info = {
+          proc: { pid: null, exitCode: null, kill: () => {} },
+          pid: null,
+          logLines: [],
+          exitCode: null,
+          signal: null,
+          startTime: Date.now(),
+          spawnError: `ENOENT: command not found: ${opts.command}`,
+          notified: false,
+        };
+        const sample = resolved.attempts.slice(0, 5).join(', ');
+        logSpawnError(info, info.spawnError,
+          `  解析过程: 按 PATH+PATHEXT 尝试 ${resolved.attempts.length} 个候选均未命中（示例: ${sample}）\n`);
+        procs.set(app.id, info);
+        notify(app.id, info);
+        return info;
+      }
+      if (resolved.type === 'cmd') {
+        // .cmd/.bat 等：经 cmd.exe /d /s /c 执行（参数按 cmd 规则转义）
+        child = spawn(resolveShell(), [...shellArgs(), winCmdLine(resolved.path, args)], base);
+      } else {
+        child = spawn(resolved.path, args, base);
+      }
     } else {
-      const args = Array.isArray(opts.args) ? opts.args.filter(Boolean) : [];
       child = spawn(opts.command, args, base);
     }
 
@@ -193,28 +302,13 @@ export function createProcessManager() {
     };
     procs.set(app.id, info);
 
-    const notify = (id, inf) => {
-      if (inf.notified) return;
-      inf.notified = true;
-      onExit?.(id, inf);
-    };
-
     child.stdout?.on('data', (c) => pushLog(info, c));
     child.stderr?.on('data', (c) => pushLog(info, c));
     child.on('error', (err) => {
       info.spawnError = err.message;
       // 诊断上下文：命令全文 / cwd / PATH，Windows 上 ENOENT（找不到命令）时据此定位
       // PATH 解析问题（GUI 启动的应用 PATH 快照可能与终端不同）。
-      const cmdLine = opts.mode === 'shell'
-        ? `${shell} ${shellArgs().join(' ')} ${opts.commandLine}`
-        : `${opts.command} ${Array.isArray(opts.args) ? opts.args.filter(Boolean).join(' ') : ''}`;
-      const pathSnippet = (env.PATH ?? '').slice(0, 600);
-      pushLog(info, Buffer.from(
-        `[spawn error] ${err.message}\n` +
-        `  command: ${cmdLine}\n` +
-        `  cwd: ${cwd ?? process.cwd()}\n` +
-        `  PATH: ${pathSnippet}${(env.PATH ?? '').length > 600 ? '…' : ''}\n`,
-      ));
+      logSpawnError(info, err.message);
       // 保留 tombstone（不删条目）：监测层据此显示 error，且再次 launch 可直接重试
       notify(app.id, info);
     });

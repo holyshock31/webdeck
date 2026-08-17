@@ -109,6 +109,7 @@ git tag v0.2.0 && git push origin v0.2.0
 - **Windows 上停止本地服务的行为差异**：Windows 没有 SIGTERM 进程组语义，停止走 `taskkill /pid <pid> /T /F` 强杀整棵进程树——控制台进程（cmd/node 等）无法温和终止，这是平台差异，不是缺陷
 - **Windows 上启动本地服务不弹黑窗**：所有本地进程均以隐藏控制台窗口启动（`windowsHide: true`）；若看到黑色控制台窗口闪出，请确认 WebDeck 版本包含跨平台适配（0.2 起）
 - **打包版（Finder/Dock 启动）里 `pnpm`/`node` 等命令找不到**：macOS 从 Finder 启动的 GUI 应用 PATH 只有系统默认目录。WebDeck 会自动补全常见用户 bin 路径（Homebrew、`~/.local/share/pnpm`、npm-global、yarn、nvm 版本目录等）；若工具装在非常规位置，请把命令改为绝对路径（如 `~/.local/share/pnpm/pnpm dsh`）
+- **Windows 上直接命令启动报 `ENOENT`（cmd 里手动执行正常）**：npm 等工具在 `nodejs` 目录同时生成无扩展名 shim（如 `dsh`）与 `dsh.cmd`，Node 的 spawn 会命中无扩展名文件后直接失败，不继续尝试 `.cmd`。WebDeck（0.1.4 起）自动按 PATH+PATHEXT 解析（跳过无扩展名 shim、`.cmd/.bat` 经 cmd.exe 执行）；旧版本解法：启动方式改为 Shell 命令并写绝对路径，如 `C:\Program Files\nodejs\dsh.cmd --profile web`
 - **Windows SmartScreen 提示「Windows 已保护你的电脑」**：未签名产物的正常提示。点击「更多信息」→「仍要运行」即可；若提示「未知发布者」且经常出现，说明信誉尚未建立，属正常现象
 - **macOS Gatekeeper 拦截「无法打开，因为无法验证开发者」**：**已签名但未公证**产物的正常提示。右键（或按住 Control 点击）应用图标 →「打开」→ 确认；或系统设置 → 隐私与安全性 →「仍要打开」
 - **macOS 报「“WebDeck” is damaged and can’t be opened」**：**未签名**（`-unsigned`）产物的正常提示——Gatekeeper 对无签名应用不提供「仍要打开」选项。解法：移除隔离属性后打开

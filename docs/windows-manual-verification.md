@@ -43,3 +43,14 @@
 ## 记录
 
 执行完成后把结果（通过/失败项）写回本清单或提交到 `openspec/changes/support-cross-platform/verify.md`（由 `/spec verify` 生成）。
+
+---
+
+## 直接命令解析（fix-spawn-path-resolution，v0.1.4 起）
+
+- [ ] 直接命令 `dsh --profile web`（nodejs 目录同时存在无扩展名 shim `dsh` 与 `dsh.cmd`）：点击 ▶ 后跳过 shim、命中 `dsh.cmd` 经 cmd 执行，服务拉起、状态变绿
+- [ ] 直接命令 `.exe` 应用（如 `notepad.exe`）：直接创建进程执行，参数原样传递
+- [ ] 直接命令 `.cmd` 脚本（如 `C:\tools\start-dev.cmd --port 8000`）：经 cmd.exe 执行成功，输出进日志面板
+- [ ] 带空格路径/引号参数的直接命令：参数转义正确（日志面板无语法错误、命令正常执行）
+- [ ] 不存在的命令：状态 error，日志面板显示 `[spawn error] ENOENT` + `解析过程:` 行（尝试候选数与示例），据此可判断命令名错误
+- [ ] GUI 启动 PATH 为空环境（explorer 超长 PATH 丢弃场景）：注册表兜底 PATH 中 `%appdata%\npm`、`%SYSTEMROOT%` 已展开为实际路径（日志面板 PATH 行无字面 `%VAR%`）

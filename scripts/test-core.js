@@ -298,6 +298,58 @@ console.log('== 测试 9: 平台差异纯函数（跨平台适配，不依赖真
     pw.includes('C:\\Users\\t\\AppData\\Local\\pnpm') && pw.includes('C:\\Users\\t\\AppData\\Roaming\\npm'));
   check('win32 PATH 补入 nodejs（npm 全局 prefix）', pw.includes('C:\\Program Files\\nodejs'));
   check('readRegistryPath 非 win32 返回 null（不触碰 reg）', (await import('../src/main/process-manager.js')).readRegistryPath() === null);
+
+  // Windows 直接命令解析（resolveWinCommand）：临时目录模拟 npm shim 布局
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const { resolveWinCommand, expandEnvVars, winCmdLine } = await import('../src/main/process-manager.js');
+  const fakeBin = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'webdeck-winbin-'));
+  try {
+    const nodejs = path.join(fakeBin, 'nodejs');
+    const tools = path.join(fakeBin, 'tools');
+    await fs.promises.mkdir(nodejs, { recursive: true });
+    await fs.promises.mkdir(tools, { recursive: true });
+    await fs.promises.writeFile(path.join(nodejs, 'dsh'), '#!/bin/sh\n');          // 无扩展名 shim（陷阱）
+    await fs.promises.writeFile(path.join(nodejs, 'dsh.cmd'), '@echo off\n');       // 真正的 cmd shim
+    await fs.promises.writeFile(path.join(nodejs, 'app.exe'), 'MZ');                // PE 可执行
+    await fs.promises.writeFile(path.join(tools, 'tool.cmd'), '@echo off\n');
+    const winEnv = { PATH: `${nodejs};${tools}`, PATHEXT: '.COM;.EXE;.BAT;.CMD' };
+
+    const r1 = resolveWinCommand('dsh', winEnv, fakeBin);
+    check('解析 dsh：跳过无扩展名 shim，命中 dsh.cmd', r1.status === 'ok' && r1.type === 'cmd' && r1.path === path.join(nodejs, 'dsh.cmd'),
+      JSON.stringify(r1));
+
+    const r2 = resolveWinCommand('app.exe', winEnv, fakeBin);
+    check('解析带扩展名命令：命中 .exe 直接执行', r2.status === 'ok' && r2.type === 'exe' && r2.path === path.join(nodejs, 'app.exe'),
+      JSON.stringify(r2));
+
+    const r3 = resolveWinCommand('tool', winEnv, fakeBin);
+    check('解析 tool：按 PATHEXT 命中 tool.cmd', r3.status === 'ok' && r3.type === 'cmd' && r3.path === path.join(tools, 'tool.cmd'),
+      JSON.stringify(r3));
+
+    const r4 = resolveWinCommand('nosuch', winEnv, fakeBin);
+    check('未命中返回 notfound 且带尝试列表', r4.status === 'notfound' && Array.isArray(r4.attempts) && r4.attempts.length > 0,
+      JSON.stringify(r4));
+
+    const r5 = resolveWinCommand('dsh', { PATH: `${tools}` }, fakeBin);
+    check('PATH 不含命令时 notfound', r5.status === 'notfound');
+
+    const r6 = resolveWinCommand(path.join(nodejs, 'dsh.cmd'), winEnv, fakeBin);
+    check('绝对路径带扩展名直接命中', r6.status === 'ok' && r6.type === 'cmd', JSON.stringify(r6));
+
+    // %VAR% 展开（大小写不敏感）与 cmd 命令行组装
+    check('%appdata% 小写展开（env 大小写不敏感）',
+      expandEnvVars('%appdata%\\npm', { APPDATA: 'C:\\Users\\t\\AppData\\Roaming' }) === 'C:\\Users\\t\\AppData\\Roaming\\npm');
+    check('%SYSTEMROOT% 大写展开（known 映射兜底）',
+      expandEnvVars('%SYSTEMROOT%\\System32', {}) === 'C:\\Windows\\System32');
+    check('未知名 %VAR% 保留原样', expandEnvVars('%UNKNOWN_VAR%\\x', {}) === '%UNKNOWN_VAR%\\x');
+    check('winCmdLine 空格参数加引号',
+      winCmdLine('C:\\a b\\dsh.cmd', ['--profile', 'web']) === '"C:\\a b\\dsh.cmd" --profile web');
+    check('winCmdLine 内部引号翻倍',
+      winCmdLine('tool.cmd', ['say "hi"']) === 'tool.cmd "say ""hi"""');
+  } finally {
+    await fs.promises.rm(fakeBin, { recursive: true, force: true });
+  }
 }
 
 server.close();

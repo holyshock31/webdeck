@@ -53,8 +53,12 @@ jobs:
 
       - name: Build macOS (unsigned, no notarization)
         if: runner.os == 'macOS' && env.CSC_LINK == ''
-        run: npx electron-builder --mac --publish never \
-          --config.mac.artifactName=WebDeck-\${version}-\${arch}-mac\${env.UNSIGNED_SUFFIX}.\${ext}
+        # 注意：必须用 block scalar（|）保留真实换行——普通标量会把行尾 `\` 折叠成
+        # `\ `（反斜杠+空格），bash 视其为转义空格，导致参数带前导空格被 yargs 拒绝
+        # （Unknown argument，v0.1.11 首次 CI 事故）。
+        run: |
+          npx electron-builder --mac --publish never \
+            --config.mac.artifactName=WebDeck-\${version}-\${arch}-mac\${env.UNSIGNED_SUFFIX}.\${ext}
         env:
           UNSIGNED_SUFFIX: '-unsigned'
 

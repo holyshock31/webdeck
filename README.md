@@ -99,7 +99,7 @@ scripts/
 
 ## 发布流程
 
-WebDeck 用 electron-builder 打包，GitHub Actions 在打 tag 时自动构建并上传 **GitHub Releases**：
+WebDeck 用 electron-builder 打包，GitHub Actions 在打 tag 时自动构建并上传 **GitHub Releases**（资产先进**草稿**，人工确认后才对外可见）：
 
 ```bash
 # 1. 更新 package.json 的 version（如 0.2.0），提交并推送
@@ -107,7 +107,10 @@ WebDeck 用 electron-builder 打包，GitHub Actions 在打 tag 时自动构建�
 git tag v0.2.0 && git push origin v0.2.0
 # 3. CI 自动构建（各自原生构建，禁止交叉编译）：
 #    macOS → dmg + zip · Windows → NSIS 安装包 + portable 便携版 · Linux → AppImage
-#    完成后到仓库 Releases 页面下载
+#    三平台资产上传到 draft（草稿）release——不自动发布、不自动标记 Latest
+# 4. 到仓库 Releases 页面确认三平台资产齐全后，手动点 "Publish release"：
+#    未 Publish 前客户端（自动更新）检测不到该版本；任一平台构建失败时
+#    release 保持草稿状态、客户端不受影响，不会出现下载 404
 ```
 
 本地构建（验证配置用）：`npm run dist`（当前平台）、`npm run dist:mac` / `dist:win` / `dist:linux`，产物在 `dist/`。

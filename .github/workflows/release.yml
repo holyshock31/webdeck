@@ -65,6 +65,10 @@ jobs:
         if: runner.os == 'Linux'
         run: npx electron-builder --linux --publish never
 
+      # 发布门禁：三平台资产全部上传进 draft（草稿）release，不自动发布、不自动标记
+      # Latest——维护者在 GitHub Releases 页面确认资产齐全后手动 "Publish release"
+      # 才对外可见（electron-updater 不读取 draft release 元数据，半成品永远不会被
+      # 客户端自动发现；任一平台构建失败时 release 保持草稿、客户端不受影响）。
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
@@ -77,3 +81,5 @@ jobs:
             dist/latest*.yml
             dist/*.blockmap
           fail_on_unmatched_files: false
+          draft: true
+          make_latest: false

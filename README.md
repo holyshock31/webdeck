@@ -134,6 +134,7 @@ git tag v0.2.0 && git push origin v0.2.0
 - **打包版（Finder/Dock 启动）里 `pnpm`/`node` 等命令找不到**：macOS 从 Finder 启动的 GUI 应用 PATH 只有系统默认目录。WebDeck 会自动补全常见用户 bin 路径（Homebrew、`~/.local/share/pnpm`、npm-global、yarn、nvm 版本目录等）；若工具装在非常规位置，请把命令改为绝对路径（如 `~/.local/share/pnpm/pnpm dsh`）
 - **Windows 上直接命令启动报 `ENOENT`（cmd 里手动执行正常）**：npm 等工具在 `nodejs` 目录同时生成无扩展名 shim（如 `dsh`）与 `dsh.cmd`，Node 的 spawn 会命中无扩展名文件后直接失败，不继续尝试 `.cmd`。WebDeck（0.1.4 起）自动按 PATH+PATHEXT 解析（跳过无扩展名 shim、`.cmd/.bat` 经 cmd.exe 执行）；旧版本解法：启动方式改为 Shell 命令并写绝对路径，如 `C:\Program Files\nodejs\dsh.cmd --profile web`
 - **Windows 上直接命令报 `'\"...\"' is not recognized` / `'C:\Program' is not recognized`**：经 cmd.exe 执行 `.cmd/.bat` 时的两层坑——①Node 序列化 argv 把引号转义成 `\"`（v0.1.5 及更早）；②cmd 的 `/S` 规则剥掉首引号，单层引号路径失去保护被按空格拆分（v0.1.6）。WebDeck（0.1.7 起）以 `windowsVerbatimArguments` 原样传递 + 双层引号包裹命令行（cmd 剥外层后内层路径引号完整）；日志面板的 `[spawn]` 链节可核对实际命令行
+- **打包版启动崩溃 `Cannot find package 'electron-updater'`（v0.1.8）**：运行时依赖须放在 `package.json` 的 `dependencies`（electron-builder 只把生产依赖打进 asar）——v0.1.8 曾把 electron-updater 误放 devDependencies 导致此崩溃，v0.1.9 起修复；开发/构建时新增被 `src/**` import 的外部包，一律放 `dependencies`
 - **Windows SmartScreen 提示「Windows 已保护你的电脑」**：未签名产物的正常提示。点击「更多信息」→「仍要运行」即可；若提示「未知发布者」且经常出现，说明信誉尚未建立，属正常现象
 - **macOS Gatekeeper 拦截「无法打开，因为无法验证开发者」**：**已签名但未公证**产物的正常提示。右键（或按住 Control 点击）应用图标 →「打开」→ 确认；或系统设置 → 隐私与安全性 →「仍要打开」
 - **macOS 报「“WebDeck” is damaged and can’t be opened」**：**未签名**（`-unsigned`）产物的正常提示——Gatekeeper 对无签名应用不提供「仍要打开」选项。解法：移除隔离属性后打开

@@ -95,3 +95,11 @@
 - [ ] macOS：检测到新版本时弹窗提供「打开下载页」按钮（不自动安装）
 - [ ] portable 版：不出现更新入口（菜单项可点但无检查行为或提示手动下载）
 - [ ] Releases 页面包含 `latest.yml` 与 `.blockmap` 元数据文件
+
+---
+
+## 运行时依赖打包（fix-bundle-runtime-deps，v0.1.9 起）
+
+- [ ] v0.1.9 安装版启动正常（不再 `Cannot find package 'electron-updater'` 崩溃）
+- [ ] 菜单「帮助 → 检查更新…」可用：手动检查返回结果（"已是最新"或错误提示），不崩溃
+- [ ] 安装目录 `resources\app.asar` 内含 `node_modules\electron-updater`（可用 7-Zip 或 `npx asar list` 抽查）

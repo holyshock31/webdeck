@@ -27,6 +27,10 @@ bug 修复、环境适配、打包发布等一切实现性改动，**一律先�
 - **诊断复现**：在临时分支/脚本中复现问题（如 CI 复现矩阵），但复现脚本不得作为正式修复落地，落地必须走 spec 流程
 - **构建验证**：`electron-builder --dir` 等只读产物验证（产物在 `dist/`，已 gitignore）
 
+## 工程约定（实现时必须遵守）
+
+- **运行时依赖分类**：被 `src/**` import 的外部包（如 electron-updater）必须放在 `package.json` 的 `dependencies`——electron-builder 只把生产依赖打进 asar，放 devDependencies 会导致打包产物 `ERR_MODULE_NOT_FOUND` 崩溃（v0.1.8 事故）；仅构建期工具（electron、electron-builder）留在 devDependencies
+
 ## 边界情形
 
 - **发现 bug 或平台差异**：先调查并报告证据 → 等用户决定是否 `/spec new` 建变更（或 `/spec edit` 并入在途变更）→ 批准后实施

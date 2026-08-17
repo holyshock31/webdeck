@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>页内查找</title>
+  <style>
+    /* 查找栏覆盖视图：仅查找栏区域不透明（其余透明），随壳主题切换（theme 查询参数由主进程注入） */
+    html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; height: 100%; }
+    body { width: 100%; height: 100%; display: flex; justify-content: flex-end; }
+    .find-bar {
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+      height: 100%;
+      padding: 0 10px;
+      font-size: 13px;
+      line-height: 1;
+      color: #d8dce4;
+      background: rgba(27, 30, 38, 0.96);
+      border: 1px solid rgba(44, 49, 61, 0.95);
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    }
+    body.light .find-bar {
+      color: #1c2128;
+      background: rgba(255, 255, 255, 0.98);
+      border-color: #d5d9e0;
+      box-shadow: 0 6px 20px rgba(15, 20, 30, 0.2);
+    }
+    #find-input {
+      flex: 1;
+      min-width: 0;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: inherit;
+      font-size: 13px;
+      font-family: inherit;
+      padding: 2px 0;
+    }
+    #find-input::placeholder { color: #8b91a0; opacity: 0.8; }
+    body.light #find-input::placeholder { color: #5a6270; }
+    #find-count {
+      min-width: 48px;
+      text-align: center;
+      color: #8b91a0;
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    body.light #find-count { color: #5a6270; }
+    button {
+      border: 0;
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 13px;
+      line-height: 1;
+      cursor: pointer;
+      color: #d8dce4;
+      background: transparent;
+    }
+    button:hover { background: rgba(127, 127, 127, 0.28); }
+    body.light button { color: #1c2128; }
+    body.light button:hover { background: rgba(15, 20, 30, 0.08); }
+    #find-close:hover { color: #f0656e; }
+    body.light #find-close:hover { color: #dc2626; }
+  </style>
+</head>
+<body class="dark">
+  <div class="find-bar">
+    <input id="find-input" type="text" placeholder="在页面中查找…" autofocus spellcheck="false" />
+    <span id="find-count"></span>
+    <button id="find-prev" title="上一处 (Shift+Enter)">↑</button>
+    <button id="find-next" title="下一处 (Enter)">↓</button>
+    <button id="find-close" title="关闭 (Esc)">✕</button>
+  </div>
+  <script>
+    // 主题跟随壳 UI：主进程加载时通过 query 注入 theme
+    const theme = new URLSearchParams(location.search).get('theme');
+    if (theme === 'light') document.body.classList.add('light');
+
+    const input = document.getElementById('find-input');
+    const countEl = document.getElementById('find-count');
+    let queryTimer = 0; // 输入防抖：避免快速输入时 IPC 洪水
+
+    function search() {
+      clearTimeout(queryTimer);
+      queryTimer = setTimeout(() => webdeckFind.query(input.value), 80);
+    }
+
+    function renderCount(matches, activeMatchOrdinal) {
+      countEl.textContent = matches > 0 ? `${activeMatchOrdinal}/${matches}` : '0/0';
+    }
+
+    input.addEventListener('input', search);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (e.shiftKey) webdeckFind.prev();
+        else webdeckFind.next();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        webdeckFind.close(); // 主进程 closeFindBar 统一交还焦点给应用视图（find:close IPC 内完成）
+      }
+    });
+
+    // 按钮 mousedown preventDefault：保持输入框焦点不丢失
+    document.getElementById('find-prev').addEventListener('mousedown', (e) => e.preventDefault());
+    document.getElementById('find-prev').addEventListener('click', () => webdeckFind.prev());
+    document.getElementById('find-next').addEventListener('mousedown', (e) => e.preventDefault());
+    document.getElementById('find-next').addEventListener('click', () => webdeckFind.next());
+    document.getElementById('find-close').addEventListener('mousedown', (e) => e.preventDefault());
+    document.getElementById('find-close').addEventListener('click', () => webdeckFind.close());
+
+    webdeckFind.onResult(({ matches, activeMatchOrdinal }) => renderCount(matches, activeMatchOrdinal));
+    webdeckFind.onReset(() => {
+      input.value = '';
+      countEl.textContent = '';
+    });
+    webdeckFind.onSync(({ open, query, matches, activeMatchOrdinal }) => {
+      if (open) {
+        input.value = query;
+        renderCount(matches, activeMatchOrdinal);
+        input.focus(); // 主题重载/首载后恢复输入框焦点（如查找栏正处于打开态）
+        input.select();
+      } else {
+        input.value = '';
+        countEl.textContent = '';
+      }
+    });
+  </script>
+</body>
+</html>

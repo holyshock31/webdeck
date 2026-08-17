@@ -458,6 +458,39 @@ console.log('== 测试 11: 更新调度纯函数（退避/抖动/portable 判定
   check('portable 判定默认 false', isPortableEnv() === false);
 }
 
+console.log('== 测试 12: 页内查找会话状态机（find.js 纯函数） ==');
+{
+  const { createFindSession } = await import('../src/main/find.js');
+  const s = createFindSession();
+  check('初始为关闭态', !s.isOpen());
+  check('初始状态清零', s.state.open === false && s.state.query === '' && s.state.matches === 0 && s.state.activeMatchOrdinal === 0);
+
+  s.open();
+  check('open 后会话打开', s.isOpen());
+
+  const r1 = s.updateQuery('webdeck');
+  check('非空输入 → 开启新查找会话 (findNext:true, forward:true)',
+    r1.action === 'search' && r1.options.forward === true && r1.options.findNext === true);
+
+  s.setResult({ matches: 5, activeMatchOrdinal: 2 });
+  check('found-in-page 回报后计数更新', s.state.matches === 5 && s.state.activeMatchOrdinal === 2);
+
+  const r2 = s.step(true);
+  check('下一处 → forward:true findNext:false（续找）', r2.action === 'search' && r2.options.forward === true && r2.options.findNext === false);
+  const r3 = s.step(false);
+  check('上一处 → forward:false findNext:false（续找）', r3.action === 'search' && r3.options.forward === false && r3.options.findNext === false);
+
+  const r4 = s.updateQuery('');
+  check('清空输入 → clear 语义且计数清零', r4.action === 'clear' && s.state.matches === 0 && s.state.activeMatchOrdinal === 0);
+  const r5 = s.step(true);
+  check('空 query 翻找为无害 no-op', r5.action === 'none');
+
+  s.close();
+  check('close 后会话关闭且状态清零', !s.isOpen() && s.state.query === '' && s.state.matches === 0);
+  const r6 = s.step(false);
+  check('关闭态翻找为无害 no-op', r6.action === 'none');
+}
+
 server.close();
 console.log(failures === 0 ? '\n✅ 全部通过' : `\n❌ ${failures} 个断言失败`);
 process.exit(failures === 0 ? 0 : 1);

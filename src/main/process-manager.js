@@ -98,6 +98,16 @@ export function winCmdLine(commandPath, args = []) {
   return [quote(commandPath), ...args.map(quote)].join(' ');
 }
 
+/**
+ * win32 经 cmd.exe 执行 .cmd/.bat 的 spawn 选项。
+ * windowsVerbatimArguments: true——argv 不再被 Node 按 C 运行时规则序列化转义
+ * （会把 `"` 转成 `\"`，cmd 不认，报 `'\"...\"' is not recognized`，v0.1.5 链路
+ * 日志实锤），整串命令行原样进入 CreateProcess，cmd 收到原始引号语法。
+ */
+export function winCmdSpawnOptions(base) {
+  return { ...base, windowsVerbatimArguments: true };
+}
+
 /** 按平台选择 Shell 命令模式的默认 shell。win32 用 ComSpec（cmd.exe），POSIX 用 $SHELL 或 /bin/zsh。 */
 export function resolveShell(platform = process.platform, env = process.env) {
   if (platform === 'win32') return env.ComSpec || 'cmd.exe';
@@ -292,8 +302,9 @@ export function createProcessManager({ logSink } = {}) {
         return info;
       }
       if (resolved.type === 'cmd') {
-        // .cmd/.bat 等：经 cmd.exe /d /s /c 执行（参数按 cmd 规则转义）
-        child = spawn(resolveShell(), [...shellArgs(), winCmdLine(resolved.path, args)], base);
+        // .cmd/.bat 等：经 cmd.exe /d /s /c 执行（参数按 cmd 规则转义；verbatim 原样传递，
+        // 避免 Node argv 序列化把引号转义为 \" 导致 cmd 报 is not recognized）
+        child = spawn(resolveShell(), [...shellArgs(), winCmdLine(resolved.path, args)], winCmdSpawnOptions(base));
       } else {
         child = spawn(resolved.path, args, base);
       }
@@ -308,6 +319,7 @@ export function createProcessManager({ logSink } = {}) {
       exitCode: null,
       signal: null,
       startTime: Date.now(),
+      exitUptimeMs: null, // 退出时冻结的存活时长（tombstone 保留期间不随面板打开时间虚增）
       spawnError: null,
       notified: false, // 退出回调每个生命周期只触发一次（error/exit 只通知最先发生的）
     };
@@ -344,8 +356,9 @@ export function createProcessManager({ logSink } = {}) {
     child.on('exit', (code, signal) => {
       info.exitCode = code;
       info.signal = signal;
+      info.exitUptimeMs = Date.now() - info.startTime; // 冻结存活时长
       pushLog(info, Buffer.from(
-        `[exit] code=${code}${signal ? ` signal=${signal}` : ''} 存活=${Date.now() - info.startTime}ms\n`,
+        `[exit] code=${code}${signal ? ` signal=${signal}` : ''} 存活=${info.exitUptimeMs}ms\n`,
       ));
       // 退出 tombstone：保留条目（日志与退出信息可查，日志面板显示"进程已退出"而非空白），
       // 下次 launch 替换、stop/删除应用时清除

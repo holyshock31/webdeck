@@ -382,7 +382,7 @@ async function openLogs() {
     if (!lines.length && !exit) {
       el.textContent = '（无日志输出）';
     } else {
-      const exitLine = exit ? `进程已退出 (code=${exit.code}${exit.signal ? `, signal=${exit.signal}` : ''}, 存活 ${Math.round(exit.uptimeMs)}ms)` : '';
+      const exitLine = exit ? `进程已退出 (code=${exit.code}${exit.signal ? `, signal=${exit.signal}` : ''}, 存活 ${Math.round(exit.uptimeMs ?? 0)}ms)` : '';
       el.textContent = [exitLine, ...lines].filter(Boolean).join('\n');
     }
     el.scrollTop = el.scrollHeight;

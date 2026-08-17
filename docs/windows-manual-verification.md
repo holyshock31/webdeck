@@ -64,3 +64,13 @@
 - [ ] 打包版 GUI 启动后 `%APPDATA%\WebDeck\logs\webdeck.log` 存在且包含本次会话的 `[launch]`/`[spawn]`/`[exit]` 链路行（带时间戳）
 - [ ] 日志文件超 1MB 轮转为 webdeck.log.1（保留 3 份），当前文件持续可写
 - [ ] npm test 与 npm run smoke 三平台 CI 全绿
+
+---
+
+## cmd 执行修复（fix-win-cmd-exec，v0.1.6 起）
+
+- [ ] 直接命令 `dsh --profile web`（命中 `dsh.cmd` 经 cmd.exe 执行）：启动成功，健康检查通过状态变绿——不再报 `'\"...\"' is not recognized`
+- [ ] 日志面板 `[spawn]` 链节显示 cmd 收到原样引号语法（`/d /s /c "C:\Program Files\nodejs\dsh.cmd" --profile web`，无反斜杠转义）
+- [ ] 启动后立即退出的进程：日志面板「进程已退出 (code=N, 存活 Xms)」的存活时长与 `[exit]` 行一致，等待数秒后重开面板数值不变（冻结）
+- [ ] 带空格路径的 `.cmd` 直接命令（如 `C:\tools\my tool.cmd`）：启动成功，路径引号不被转义破坏
+- [ ] npm test 与 npm run smoke 三平台 CI 全绿

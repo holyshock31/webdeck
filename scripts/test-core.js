@@ -354,6 +354,11 @@ console.log('== 测试 9: 平台差异纯函数（跨平台适配，不依赖真
       winCmdLine('C:\\a b\\dsh.cmd', ['--profile', 'web']) === '"C:\\a b\\dsh.cmd" --profile web');
     check('winCmdLine 内部引号翻倍',
       winCmdLine('tool.cmd', ['say "hi"']) === 'tool.cmd "say ""hi"""');
+    // windowsVerbatimArguments：cmd 分支 spawn 选项原样传递命令行（防 argv 序列化转义引号）
+    const { winCmdSpawnOptions } = await import('../src/main/process-manager.js');
+    const opts = winCmdSpawnOptions({ cwd: 'C:\\x', windowsHide: true });
+    check('cmd 分支 spawn 含 windowsVerbatimArguments: true', opts.windowsVerbatimArguments === true);
+    check('cmd 分支 spawn 保留 base 选项', opts.cwd === 'C:\\x' && opts.windowsHide === true);
   } finally {
     await fs.promises.rm(fakeBin, { recursive: true, force: true });
   }
@@ -386,6 +391,12 @@ console.log('== 测试 10: 启动链路日志 + 退出 tombstone 生命周期 + 
   while (Date.now() - tA < 4000 && infoA.exitCode === null) await sleep(50);
   check('退出码记录 3', infoA.exitCode === 3, `code=${infoA.exitCode}`);
   check('链路含 [exit] code=3', infoA.logLines.some((l) => l.startsWith('[exit] code=3')));
+  // exitUptimeMs 冻结：退出后延迟读取值不变（面板打开时间不虚增存活时长）
+  const uptimeAtExit = infoA.exitUptimeMs;
+  check('exitUptimeMs 退出时已冻结', typeof uptimeAtExit === 'number' && uptimeAtExit > 0);
+  await sleep(300);
+  check('exitUptimeMs 延迟后不变（不虚增）', infoA.exitUptimeMs === uptimeAtExit,
+    `${infoA.exitUptimeMs} vs ${uptimeAtExit}`);
   const tombA = pm.info(appChain.id);
   check('退出 tombstone 保留', Boolean(tombA && tombA.exitCode === 3 && tombA.logLines.length > 0));
 

@@ -245,7 +245,7 @@ icon 字段随应用配置一起持久化（webdeck.json），重启 WebDeck 后
 
 ### Requirement: 应用身份显示项目名称
 
-WebDeck 的应用身份显示为项目名 "WebDeck" 而非 Electron 默认值：macOS 的 Dock 悬停提示与 ⌘Tab 切换器、Windows 的任务栏 hover 与通知归属、macOS 菜单栏应用菜单标题均使用 WebDeck。开发态（未打包 `electron .`）下，macOS 经改名的应用包副本（scripts/dev-mac.sh）启动，Windows 经 AppUserModelID 声明（com.webdeck.WebDeck）。
+WebDeck 的应用身份显示为项目名 "WebDeck" 而非 Electron 默认值：macOS 的 Dock 悬停提示与 ⌘Tab 切换器、Windows 的任务栏 hover 与通知归属、macOS 菜单栏应用菜单标题均使用 WebDeck。开发态（未打包 `electron .`）下，macOS 经改名的应用包副本（scripts/dev.sh）启动，Windows 经 AppUserModelID 声明；打包态（electron-builder）下 `appId` 统一为 `com.webdeck.app`——与 scripts/dev.sh 的 CFBundleIdentifier 一致，`app.setAppUserModelId` 与打包 `appId` 一致，Windows 产物以 `com.webdeck.app` 注册 AppUserModelID，开发态与打包态的应用身份不再有差异。
 
 #### Scenario: macOS Dock 悬停显示 WebDeck
 
@@ -257,7 +257,7 @@ macOS 下按 ⌘Tab 切换应用，WebDeck 条目显示名称为 WebDeck。
 
 #### Scenario: Windows 任务栏显示项目名
 
-Windows 下启动 WebDeck，任务栏按钮 hover 与通知归属显示 WebDeck，应用以 com.webdeck.WebDeck 注册 AppUserModelID。
+Windows 下启动 WebDeck（开发态或安装打包产物），任务栏按钮 hover 与通知归属显示 WebDeck；打包产物以 `com.webdeck.app` 注册 AppUserModelID，与 electron-builder `appId` 及开发态身份一致。
 
 #### Scenario: 菜单栏应用菜单标题
 
@@ -389,11 +389,11 @@ Windows 上本地进程的 stdout/stderr 输出进入日志面板时按 UTF-8 �
 
 ### Requirement: Windows 直接命令模式的可执行文件解析
 
-Windows 上「直接命令」启动方式使用自实现的可执行文件解析：按 PATH 顺序 + PATHEXT 查找——**跳过无扩展名且非可执行的文件**（npm 等工具生成的无扩展名 shim 会导致 libuv 原样命中后 CreateProcess 失败报 ENOENT 的陷阱），命中 `.exe` / `.com` 直接执行，命中 `.cmd` / `.bat` 转经 cmd.exe（`/d /s /c`）执行；未命中时报 ENOENT 且诊断信息记录尝试过的目录。POSIX（macOS / Linux）行为不变（直接 spawn，无扩展名文件本身可执行）。
+Windows 上「直接命令」启动方式使用自实现的可执行文件解析：按 PATH 顺序 + PATHEXT 查找——**跳过无扩展名且非可执行的文件**（npm 等工具生成的无扩展名 shim 会导致 libuv 原样命中后 CreateProcess 失败报 ENOENT 的陷阱），命中 `.exe` / `.com` 直接执行，命中 `.cmd` / `.bat` 转经 cmd.exe（`/d /s /c`）执行；**经 cmd.exe 执行时以 `windowsVerbatimArguments` 原样传递整串命令行**（含路径引号），避免 Node argv 序列化把引号转义为 `\"` 导致 cmd 报「is not recognized」；未命中时报 ENOENT 且诊断信息记录尝试过的目录。POSIX（macOS / Linux）行为不变（直接 spawn，无扩展名文件本身可执行）。
 
 #### Scenario: Windows 上 npm 全局工具可直接命令启动
 
-用户在 Windows 上配置直接命令 `dsh --profile web`（`C:\Program Files\nodejs` 下同时存在无扩展名 shim `dsh` 与 `dsh.cmd`），点击 ▶ 后命令解析跳过无扩展名 shim、命中 `dsh.cmd` 并经 cmd.exe 执行，本地服务正常拉起，健康检查通过后状态灯变绿。
+用户在 Windows 上配置直接命令 `dsh --profile web`（`C:\Program Files\nodejs` 下同时存在无扩展名 shim `dsh` 与 `dsh.cmd`），点击 ▶ 后命令解析跳过无扩展名 shim、命中 `dsh.cmd`，经 cmd.exe 以原样命令行执行（不出现 `'\"...\"' is not recognized` 报错），本地服务正常拉起，健康检查通过后状态灯变绿。
 
 #### Scenario: Windows 上 .exe 应用直接执行
 
@@ -401,7 +401,7 @@ Windows 上「直接命令」启动方式使用自实现的可执行文件解析
 
 #### Scenario: Windows 上 .cmd 应用可启动
 
-用户配置直接命令指向一个 `.cmd` 脚本（如 `C:\tools\start-dev.cmd --port 8000`），点击 ▶ 后经 cmd.exe 执行成功，命令输出进入日志面板。
+用户配置直接命令指向一个 `.cmd` 脚本（如 `C:\tools\start-dev.cmd --port 8000`），点击 ▶ 后经 cmd.exe 执行成功（带引号的路径不被转义破坏），命令输出进入日志面板。
 
 #### Scenario: 命令未命中时报错并给出解析过程
 
@@ -461,11 +461,15 @@ win32 直接命令解析未命中时，`[resolve]` 链节显示按 PATH+PATHEXT 
 
 ### Requirement: 本地进程退出后日志保留
 
-本地进程退出（含非零退出码）后，其日志与退出信息（退出码、信号、存活时长）**保留可见**：日志面板显示「进程已退出 (code=N, 存活 Xs)」而非空白；保留至下次启动（替换）、手动停止或删除应用时清除。spawn 失败 tombstone 语义不变。
+本地进程退出（含非零退出码）后，其日志与退出信息（退出码、信号、**退出时冻结的存活时长**）**保留可见**：日志面板显示「进程已退出 (code=N, 存活 Xs)」而非空白，存活时长在退出瞬间记录、不随时间虚增；保留至下次启动（替换）、手动停止或删除应用时清除。spawn 失败 tombstone 语义不变。
 
 #### Scenario: 启动后立即退出的进程日志仍可见
 
-用户在 Windows 上启动一个启动后立即退出的应用（如 cmd 转义错误导致 `dsh.cmd` 执行失败），日志面板仍显示该进程的 stdout/stderr 片段与「进程已退出 (code=9009, 存活 0.1s)」，不会因进程退出而变空白。
+用户在 Windows 上启动一个启动后立即退出的应用（如 cmd 转义错误导致 `dsh.cmd` 执行失败），日志面板仍显示该进程的 stdout/stderr 片段与「进程已退出 (code=1, 存活 0.1s)」，不会因进程退出而变空白。
+
+#### Scenario: 退出状态行的存活时长不虚增
+
+用户启动一个立即退出的应用并等待数秒后打开日志面板，面板显示的存活时长与进程实际存活时长一致（等于退出时冻结值），不随打开面板的时间推移变大。
 
 #### Scenario: 重新启动后日志刷新
 

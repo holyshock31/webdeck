@@ -354,7 +354,7 @@ function registerIpc() {
     return {
       lines: info.logLines,
       exit: (info.exitCode !== null || info.signal !== null)
-        ? { code: info.exitCode, signal: info.signal, uptimeMs: Date.now() - info.startTime }
+        ? { code: info.exitCode, signal: info.signal, uptimeMs: info.exitUptimeMs ?? 0 }
         : null,
     };
   });

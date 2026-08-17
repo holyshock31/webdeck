@@ -51,10 +51,14 @@
     },
     "win": {
       "icon": "assets/icon.ico",
+      "artifactName": "WebDeck.Setup.${version}.${ext}",
       "target": [
         "nsis",
         "portable"
       ]
+    },
+    "portable": {
+      "artifactName": "WebDeck.${version}.${ext}"
     },
     "linux": {
       "icon": "assets/icon.png",

@@ -35,7 +35,9 @@ jobs:
 
       # 三平台各自原生构建（禁止交叉编译：mac runner 不产 Windows 包）。
       # macOS：secrets 齐备时自动签名 + 公证（notarize 经 --config 注入）；
-      #       secrets 缺失时构建未签名产物，产物名带 -unsigned 标记，README 有绕过指引。
+      #       secrets 缺失时构建未签名产物，artifactName 注入 -unsigned 后缀——
+      #       后缀在构建时生效，latest-mac.yml 元数据与资产名同时生成、天然一致
+      #       （禁止构建后 mv 重命名：会导致元数据 url 与资产名不一致，更新 404）。
       # Windows：当前决策「先不签」（SmartScreen 提示，README 有绕过指引）。
       - name: Build macOS (signed + notarized)
         if: runner.os == 'macOS' && env.CSC_LINK != ''
@@ -51,11 +53,10 @@ jobs:
 
       - name: Build macOS (unsigned, no notarization)
         if: runner.os == 'macOS' && env.CSC_LINK == ''
-        run: |
-          npx electron-builder --mac --publish never
-          for f in dist/*.dmg dist/*.zip; do
-            [ -e "$f" ] && mv "$f" "${f%.*}-unsigned.${f##*.}"
-          done
+        run: npx electron-builder --mac --publish never \
+          --config.mac.artifactName=WebDeck-\${version}-\${arch}-mac\${env.UNSIGNED_SUFFIX}.\${ext}
+        env:
+          UNSIGNED_SUFFIX: '-unsigned'
 
       - name: Build Windows
         if: runner.os == 'Windows'

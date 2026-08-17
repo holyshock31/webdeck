@@ -103,3 +103,11 @@
 - [ ] v0.1.9 安装版启动正常（不再 `Cannot find package 'electron-updater'` 崩溃）
 - [ ] 菜单「帮助 → 检查更新…」可用：手动检查返回结果（"已是最新"或错误提示），不崩溃
 - [ ] 安装目录 `resources\app.asar` 内含 `node_modules\electron-updater`（可用 7-Zip 或 `npx asar list` 抽查）
+
+---
+
+## 更新元数据一致性（fix-update-metadata，v0.1.11 起生效；v0.1.10 已存量修复）
+
+- [ ] v0.1.9（macOS）或更早安装版：检查更新 → 下载 v0.1.10 成功（不再 status 404），sha512 校验通过
+- [ ] Windows 安装版：检查更新 → 按 latest.yml 下载 Setup.exe 成功（url 与资产名一致）
+- [ ] 新版本发布后：Releases 页面 latest*.yml 的 url 与同名资产一致（抽查）

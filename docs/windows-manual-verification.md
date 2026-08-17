@@ -54,3 +54,13 @@
 - [ ] 带空格路径/引号参数的直接命令：参数转义正确（日志面板无语法错误、命令正常执行）
 - [ ] 不存在的命令：状态 error，日志面板显示 `[spawn error] ENOENT` + `解析过程:` 行（尝试候选数与示例），据此可判断命令名错误
 - [ ] GUI 启动 PATH 为空环境（explorer 超长 PATH 丢弃场景）：注册表兜底 PATH 中 `%appdata%\npm`、`%SYSTEMROOT%` 已展开为实际路径（日志面板 PATH 行无字面 `%VAR%`）
+
+---
+
+## 启动链路日志（add-launch-log-chain，v0.1.5 起）
+
+- [ ] Windows 上直接命令 `dsh --profile web` 启动失败后，日志面板显示完整链路：`[launch]`（trigger=manual）、`[env]`（PATH来源）、`[resolve]`（命中路径或未命中候选数）、`[spawn]`（cmd.exe + spawnargs 真实命令行）、`[exit]`（退出码/存活时长）、`[judge]`（error 及 detail）
+- [ ] 启动后立即退出的进程：日志面板显示「进程已退出 (code=N, 存活 Xms)」而非空白；再次启动后日志刷新；⏹ 停止后清除
+- [ ] 打包版 GUI 启动后 `%APPDATA%\WebDeck\logs\webdeck.log` 存在且包含本次会话的 `[launch]`/`[spawn]`/`[exit]` 链路行（带时间戳）
+- [ ] 日志文件超 1MB 轮转为 webdeck.log.1（保留 3 份），当前文件持续可写
+- [ ] npm test 与 npm run smoke 三平台 CI 全绿

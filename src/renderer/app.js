@@ -375,9 +375,16 @@ async function openLogs() {
   webdeck.setModalOpen(true).catch(() => {});
   clearInterval(logTimer);
   const refresh = async () => {
-    const lines = await webdeck.getLogs(app.id);
+    const data = await webdeck.getLogs(app.id);
+    const lines = Array.isArray(data) ? data : (data?.lines ?? []); // 兼容旧结构
+    const exit = data && !Array.isArray(data) ? data.exit : null;
     const el = $('#log-content');
-    el.textContent = lines.length ? lines.join('\n') : '（无日志输出）';
+    if (!lines.length && !exit) {
+      el.textContent = '（无日志输出）';
+    } else {
+      const exitLine = exit ? `进程已退出 (code=${exit.code}${exit.signal ? `, signal=${exit.signal}` : ''}, 存活 ${Math.round(exit.uptimeMs)}ms)` : '';
+      el.textContent = [exitLine, ...lines].filter(Boolean).join('\n');
+    }
     el.scrollTop = el.scrollHeight;
   };
   await refresh();

@@ -36,6 +36,23 @@ npm run smoke      # 全链路冒烟测试（自动开窗跑一遍后退出）
 - ⌘1–⌘9 切换标签，⌘R 重载当前应用，⌘⌥I 当前应用开发者工具
 - 应用菜单里也可切换（带勾选态）
 
+### 启动日志怎么读
+
+日志面板按**链路**记录每次本地进程启动，从下到上依次是：
+
+```
+[launch] trigger=manual mode=direct cmd=dsh args=--profile web cwd=...
+[env] PATH来源=注册表兜底(HKLM+HKCU)+补全 PATH长度=3501
+[resolve] dsh → C:\Program Files\nodejs\dsh.cmd (cmd, 共尝试 12 候选)
+[spawn] exec=C:\Windows\System32\cmd.exe argv=/d,/s,/c,"C:\Program Files\nodejs\dsh.cmd" --profile web
+（进程 stdout/stderr 输出…）
+[exit] code=9009 signal=null 存活=85ms
+[judge] status=error detail=进程异常退出 (code=9009)
+```
+
+- **进程退出后日志保留**：日志面板显示「进程已退出 (code=N, 存活 Xs)」而非空白，直到下次启动/停止/删除应用
+- **打包版（GUI 启动）全量日志落盘**：`userData/logs/webdeck.log`（1MB 轮转，保留 3 份），`userData` 位置：macOS `~/Library/Application Support/WebDeck/`，Windows `%APPDATA%\WebDeck\`，Linux `~/.config/WebDeck/`
+
 ## 架构
 
 ```

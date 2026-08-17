@@ -193,9 +193,9 @@ export function spawnDetached(platform = process.platform) {
 }
 
 /**
- * @returns {{ launch(app, onExit): object, stop(app): Promise<boolean>, stopMany(apps): void, info(id): object|null }}
+ * @returns {{ launch(app, onExit, meta?): object, stop(app): Promise<boolean>, stopMany(apps): void, info(id): object|null }}
  */
-export function createProcessManager() {
+export function createProcessManager({ logSink } = {}) {
   const procs = new Map(); // appId -> { proc, pid, logLines, exitCode, signal, startTime, spawnError }
 
   function pushLog(info, chunk) {
@@ -204,6 +204,7 @@ export function createProcessManager() {
       if (!line) continue;
       info.logLines.push(line);
       if (info.logLines.length > MAX_LOG_LINES) info.logLines.shift();
+      logSink?.(line);
     }
   }
 
@@ -212,21 +213,30 @@ export function createProcessManager() {
    * 上一次 spawn 失败（tombstone）时不阻塞重试，直接替换为新进程。
    * @param {object} app 规范化后的应用配置（含 launch）
    * @param {(appId: string, info: object) => void} onExit 进程退出回调
+   * @param {{trigger?: string}} meta 启动元信息（trigger: manual/auto 等）
    */
-  function launch(app, onExit) {
+  function launch(app, onExit, meta = {}) {
     const existing = procs.get(app.id);
-    if (existing && existing.proc.exitCode === null && !existing.spawnError) return existing;
+    // 幂等判定：运行中（exitCode/signal 均为空且无 spawnError）才复用现有实例；
+    // 退出 tombstone（信号杀死的进程 exitCode 为 null 但 signal 非空）允许替换
+    if (existing && existing.proc.exitCode === null && !existing.signal && !existing.spawnError) return existing;
 
     const opts = app.launch;
     const env = { ...process.env, ...(opts.env ?? {}) };
+    let envSource = '继承';
     if (process.platform === 'win32' && !(env.PATH ?? '').trim()) {
       // Windows GUI 应用由 explorer 启动，超长 PATH 可能被整体丢弃（process.env.PATH 为空，
       // 典型症状：cmd 里能跑的命令 GUI 应用里 ENOENT）——从注册表合并系统+用户 PATH 兜底
       const regPath = readRegistryPath(env);
-      if (regPath) env.PATH = regPath;
+      if (regPath) {
+        env.PATH = regPath;
+        envSource = '注册表兜底(HKLM+HKCU)';
+      }
     }
     // GUI 启动（打包版）PATH 不完整：补全常见用户 bin 目录，保证 pnpm/node 等命令可解析
+    const pathBefore = (env.PATH ?? '').length;
     env.PATH = resolveEnvPath(process.platform, env, os.homedir());
+    if ((env.PATH ?? '').length > pathBefore) envSource += '+补全';
     const cwd = opts.cwd?.trim() ? opts.cwd.trim() : undefined;
     const stdio = ['ignore', 'pipe', 'pipe'];
     // windowsHide: 所有平台统一隐藏子进程控制台窗口（Windows 上避免每次启动闪黑窗）
@@ -256,12 +266,13 @@ export function createProcessManager() {
     };
 
     let child;
+    let resolved = null;
     if (opts.mode === 'shell') {
       const shell = resolveShell();
       child = spawn(shell, [...shellArgs(), opts.commandLine], base);
     } else if (process.platform === 'win32') {
       // 直接命令：自实现解析（跳过无扩展名 shim，.cmd/.bat 经 cmd.exe 执行）
-      const resolved = resolveWinCommand(opts.command, env, cwd ?? process.cwd());
+      resolved = resolveWinCommand(opts.command, env, cwd ?? process.cwd());
       if (resolved.status !== 'ok') {
         const info = {
           proc: { pid: null, exitCode: null, kill: () => {} },
@@ -302,6 +313,24 @@ export function createProcessManager() {
     };
     procs.set(app.id, info);
 
+    // 链路日志：[launch] 触发与配置 / [env] PATH 来源 / [resolve] 解析结果 / [spawn] 真实命令行
+    const cmdDesc = opts.mode === 'shell'
+      ? `mode=shell cmd=${opts.commandLine}`
+      : `mode=direct cmd=${opts.command}${args.length ? ` args=${args.join(' ')}` : ''}`;
+    pushLog(info, Buffer.from(
+      `[launch] trigger=${meta.trigger ?? 'manual'} ${cmdDesc} cwd=${cwd ?? process.cwd()}\n` +
+      `[env] PATH来源=${envSource} PATH长度=${(env.PATH ?? '').length}\n`,
+    ));
+    if (resolved) {
+      pushLog(info, Buffer.from(resolved.status === 'ok'
+        ? `[resolve] ${opts.command} → ${resolved.path} (${resolved.type}, 共尝试 ${resolved.attempts.length} 候选)\n`
+        : `[resolve] ${opts.command} 未命中（尝试 ${resolved.attempts.length} 候选: ${resolved.attempts.slice(0, 3).join(', ')}…）\n`,
+      ));
+    }
+    // child.spawnargs：Node 序列化后的真实命令行（cmd 转义冲突的直接证据）
+    const spawnargs = Array.isArray(child.spawnargs) ? child.spawnargs : [];
+    pushLog(info, Buffer.from(`[spawn] exec=${spawnargs[0] ?? '?'} argv=${spawnargs.slice(1).join(' ') || '（无参数）'}\n`));
+
     child.stdout?.on('data', (c) => pushLog(info, c));
     child.stderr?.on('data', (c) => pushLog(info, c));
     child.on('error', (err) => {
@@ -315,8 +344,11 @@ export function createProcessManager() {
     child.on('exit', (code, signal) => {
       info.exitCode = code;
       info.signal = signal;
-      // spawn 失败的 tombstone 保留到 stop/下次 launch，避免状态翻回 stopped
-      if (!info.spawnError) procs.delete(app.id);
+      pushLog(info, Buffer.from(
+        `[exit] code=${code}${signal ? ` signal=${signal}` : ''} 存活=${Date.now() - info.startTime}ms\n`,
+      ));
+      // 退出 tombstone：保留条目（日志与退出信息可查，日志面板显示"进程已退出"而非空白），
+      // 下次 launch 替换、stop/删除应用时清除
       notify(app.id, info);
     });
 
@@ -330,6 +362,10 @@ export function createProcessManager() {
     if (!info) return false;
     if (info.spawnError) {
       procs.delete(app.id); // 从未成功启动：清除失败痕迹，视为已停止
+      return true;
+    }
+    if (info.exitCode !== null || info.signal !== null) {
+      procs.delete(app.id); // 退出 tombstone（含信号终止：exitCode null + signal 非空）：清除退出日志，状态回到 stopped
       return true;
     }
 
@@ -360,7 +396,7 @@ export function createProcessManager() {
   function stopMany(apps) {
     for (const app of apps) {
       const info = procs.get(app.id);
-      if (!info) continue;
+      if (!info || info.exitCode !== null || info.signal !== null) continue; // 已退出（tombstone）无需清理
       if (process.platform === 'win32') {
         killWinTree(info.proc.pid, true);
         continue;

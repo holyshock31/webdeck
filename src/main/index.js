@@ -6,6 +6,7 @@ import { createStore } from './store.js';
 import { createApps } from './apps.js';
 import { createProcessManager } from './process-manager.js';
 import { createMonitor } from './monitor.js';
+import { createFileLogger } from './file-logger.js';
 
 // 应用身份声明：直接 `electron .` 开发态运行时，进程/任务栏身份默认取自 Electron
 // 二进制。这里显式声明项目名（Windows 任务栏与通知按 AppUserModelID 归属；
@@ -30,6 +31,7 @@ let apps = null;
 let procs = null;
 let monitor = null;
 let store = null;
+let fileLog = null;            // 落盘日志（userData/logs/webdeck.log），GUI 打包版查看链路日志的途径
 const views = new Map();     // appId -> WebContentsView
 const statuses = new Map();  // appId -> { status, detail, updatedAt }
 let activeId = null;
@@ -44,6 +46,13 @@ function setStatus(id, status, detail) {
   if (prev && prev.status === status && prev.detail === detail) return;
   statuses.set(id, { status, detail, updatedAt: Date.now() });
   win?.webContents.send('apps:status', { id, status, detail });
+  // [judge] 链节：状态判定结果写入该应用的日志（面板可见 + 落盘）
+  const info = procs?.info?.(id);
+  if (info) {
+    info.logLines.push(`[judge] status=${status} detail=${detail}`);
+    if (info.logLines.length > 400) info.logLines.shift();
+    fileLog?.log(`[judge] app=${id} status=${status} detail=${detail}`);
+  }
 }
 
 function currentStatus(id) {
@@ -52,9 +61,9 @@ function currentStatus(id) {
 
 // ---------------------------------------------------------------- 进程
 
-function startAppProcess(appCfg) {
+function startAppProcess(appCfg, trigger = 'manual') {
   const existing = procs.info(appCfg.id);
-  if (existing && existing.proc.exitCode === null && !existing.spawnError) return existing;
+  if (existing && existing.proc.exitCode === null && !existing.signal && !existing.spawnError) return existing;
   setStatus(appCfg.id, 'starting', '正在启动本地服务…');
   return procs.launch(appCfg, (id, info) => {
     if (info.spawnError) {
@@ -64,7 +73,7 @@ function startAppProcess(appCfg) {
     } else {
       setStatus(id, 'stopped', '进程已退出');
     }
-  });
+  }, { trigger });
 }
 
 async function stopAppProcess(appCfg) {
@@ -193,7 +202,7 @@ async function activateApp(id) {
     if (await monitor.isHealthy(appCfg)) {
       setStatus(id, 'running', '健康检查通过，服务已在运行');
     } else {
-      startAppProcess(appCfg);
+      startAppProcess(appCfg, 'auto');
     }
   }
 
@@ -339,7 +348,16 @@ function registerIpc() {
     await stopAppProcess(app);
     return { ok: true };
   });
-  ipcMain.handle('app:logs', (_e, id) => procs.info(id)?.logLines ?? []);
+  ipcMain.handle('app:logs', (_e, id) => {
+    const info = procs.info(id);
+    if (!info) return { lines: [], exit: null };
+    return {
+      lines: info.logLines,
+      exit: (info.exitCode !== null || info.signal !== null)
+        ? { code: info.exitCode, signal: info.signal, uptimeMs: Date.now() - info.startTime }
+        : null,
+    };
+  });
   ipcMain.handle('app:openExternal', (_e, url) => {
     if (/^https?:/i.test(String(url ?? ''))) shell.openExternal(url);
     return { ok: true };
@@ -603,11 +621,13 @@ app.whenReady().then(async () => {
   // BrowserWindow.icon covers Windows/Linux; macOS uses the Dock API in development.
   app.dock?.setIcon(APP_ICON);
   dbg('ready: create store');
+  fileLog = createFileLogger(path.join(app.getPath('userData'), 'logs'));
+  fileLog.log('[boot] WebDeck started');
   store = createStore(app.getPath('userData'));
   apps = createApps(store);
   await apps.load();
   dbg(`ready: apps loaded (${apps.list().length})`);
-  procs = createProcessManager();
+  procs = createProcessManager({ logSink: (line) => fileLog.log(line) });
   monitor = createMonitor({
     getApp: (id) => apps.get(id),
     getProc: (id) => procs.info(id),

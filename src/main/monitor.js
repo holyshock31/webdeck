@@ -42,7 +42,8 @@ export function createMonitor({ getApp, getProc, setStatus }) {
     const proc = getProc(id);
     const hasLaunch = app.launch?.mode !== 'none';
     const spawnFailed = Boolean(proc?.spawnError);
-    const procAlive = Boolean(proc && !spawnFailed && proc.proc.exitCode === null);
+    // procAlive：运行中判定——exitCode/signal 均为空（信号杀死的进程 exitCode 为 null 但 signal 非空）
+    const procAlive = Boolean(proc && !spawnFailed && proc.exitCode === null && !proc.signal);
     const launchTimeout = app.launch?.timeoutMs ?? 30000;
 
     let status;

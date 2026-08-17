@@ -213,7 +213,14 @@ console.log('== 测试 7: 手动启动/停止幂等 + spawn 失败 tombstone + �
   while (Date.now() - t0 < 4000 && quickInfo.exitCode === null) await sleep(50);
   await sleep(300);
   check('正常退出的回调只触发一次', quickExits === 1, `exits=${quickExits}, code=${quickInfo.exitCode}`);
-  check('正常退出后条目已清理', procs.info(appQuick.id) === null);
+  // 退出 tombstone：条目保留（日志/退出信息可查），直到下次 launch 或 stop 清除
+  const quickTomb = procs.info(appQuick.id);
+  check('正常退出后 tombstone 保留（exitCode 非空）',
+    Boolean(quickTomb && quickTomb.exitCode === 0), JSON.stringify(quickTomb));
+  check('退出 tombstone 含 [exit] 链路行',
+    (quickTomb?.logLines ?? []).some((l) => l.startsWith('[exit]')), JSON.stringify(quickTomb?.logLines));
+  await procs.stop(appQuick);
+  check('stop 清除退出 tombstone', procs.info(appQuick.id) === null);
 
   // spawn 失败 → tombstone 保留 → 监测显示 error → 修正后重试成功
   const appBad = {
@@ -349,6 +356,69 @@ console.log('== 测试 9: 平台差异纯函数（跨平台适配，不依赖真
       winCmdLine('tool.cmd', ['say "hi"']) === 'tool.cmd "say ""hi"""');
   } finally {
     await fs.promises.rm(fakeBin, { recursive: true, force: true });
+  }
+}
+
+console.log('== 测试 10: 启动链路日志 + 退出 tombstone 生命周期 + 日志轮转 ==');
+{
+  const fs10 = await import('node:fs');
+  const os10 = await import('node:os');
+  const { createProcessManager } = await import('../src/main/process-manager.js');
+  const { createFileLogger, shouldRotate, rotateFiles, DEFAULT_MAX_BYTES } = await import('../src/main/file-logger.js');
+
+  // logSink 注入：链路行同步到外部
+  const sinkLines = [];
+  const pm = createProcessManager({ logSink: (l) => sinkLines.push(l) });
+
+  // 链路日志：启动 → [launch]/[env]/[spawn] 链节 → 快速退出 → [exit] + tombstone
+  const appChain = {
+    id: 't10a', name: 'chain', url: 'http://127.0.0.1:9/',
+    launch: { mode: 'direct', command: process.execPath, args: ['-e', 'setTimeout(()=>process.exit(3), 200)'], timeoutMs: 5000 },
+    monitor: { enabled: false, url: 'http://127.0.0.1:9/', intervalSec: 1, expectedStatus: 200 },
+  };
+  const infoA = pm.launch(appChain, () => {}, { trigger: 'manual' });
+  check('链路含 [launch] trigger=manual', infoA.logLines.some((l) => l.startsWith('[launch] trigger=manual')));
+  check('链路含 [env] PATH来源', infoA.logLines.some((l) => l.startsWith('[env] PATH来源')));
+  check('链路含 [spawn] 真实命令行', infoA.logLines.some((l) => l.startsWith('[spawn] exec=')));
+  check('logSink 收到链路行', sinkLines.some((l) => l.startsWith('[launch]')));
+
+  const tA = Date.now();
+  while (Date.now() - tA < 4000 && infoA.exitCode === null) await sleep(50);
+  check('退出码记录 3', infoA.exitCode === 3, `code=${infoA.exitCode}`);
+  check('链路含 [exit] code=3', infoA.logLines.some((l) => l.startsWith('[exit] code=3')));
+  const tombA = pm.info(appChain.id);
+  check('退出 tombstone 保留', Boolean(tombA && tombA.exitCode === 3 && tombA.logLines.length > 0));
+
+  // 再次 launch 替换 tombstone
+  const infoA2 = pm.launch(appChain, () => {}, { trigger: 'auto' });
+  check('再次 launch 替换 tombstone（新实例 exitCode null）',
+    infoA2 !== infoA && infoA2.exitCode === null && infoA2.logLines.some((l) => l.startsWith('[launch] trigger=auto')));
+  const tA2 = Date.now();
+  while (Date.now() - tA2 < 4000 && infoA2.exitCode === null && !infoA2.signal) await sleep(50);
+  await pm.stop(appChain); // 进程已退出后 stop → 清除 tombstone
+  check('stop 清除退出 tombstone', pm.info(appChain.id) === null);
+
+  // 日志轮转纯函数：临时目录模拟
+  const logDir = await fs10.promises.mkdtemp(path.join(os10.tmpdir(), 'webdeck-logtest-'));
+  try {
+    const logger = createFileLogger(logDir, { maxBytes: 64 });
+    logger.log('x'.repeat(40)); // 首行
+    check('未超限不轮转', fs10.existsSync(path.join(logDir, 'webdeck.log')) && !fs10.existsSync(path.join(logDir, 'webdeck.log.1')));
+    logger.log('y'.repeat(40)); // 触发超限
+    check('超限后轮转（base.1 存在）', fs10.existsSync(path.join(logDir, 'webdeck.log.1')));
+    check('轮转后新文件可写', fs10.existsSync(path.join(logDir, 'webdeck.log')));
+    const r1 = fs10.readFileSync(path.join(logDir, 'webdeck.log.1'), 'utf8');
+    check('轮转内容为旧日志', r1.includes('x'.repeat(40)));
+    // shouldRotate 纯函数
+    const big = path.join(logDir, 'big.log');
+    fs10.writeFileSync(big, 'a'.repeat(100));
+    check('shouldRotate 超限判定', shouldRotate(big, 64) === true);
+    check('shouldRotate 不存在文件 false', shouldRotate(path.join(logDir, 'nope.log'), 64) === false);
+    // rotateFiles 命名链（keep=3）
+    rotateFiles(logDir, 'webdeck.log', 3);
+    check('轮转链 base.2 存在', fs10.existsSync(path.join(logDir, 'webdeck.log.2')));
+  } finally {
+    await fs10.promises.rm(logDir, { recursive: true, force: true });
   }
 }
 

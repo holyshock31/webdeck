@@ -1,7 +1,7 @@
 {
   "name": "webdeck",
   "productName": "WebDeck",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "通用桌面网页包装器：通过 URL 添加应用，支持本地命令启动方式与健康监测。跨平台（macOS / Windows / Linux）。",
   "type": "module",
   "main": "src/main/index.js",

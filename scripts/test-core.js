@@ -480,6 +480,24 @@ console.log('== 测试 11b: 更新加固纯函数（installDirectory 对齐 / �
   check('进度回退不记录', shouldLogProgress(40, 50) === false);
 }
 
+console.log('== 测试 11c: 多语言 release notes 本地化（localizeReleaseNotes） ==');
+{
+  const { localizeReleaseNotes } = await import('../src/main/updater-policy.js');
+  const bilingual = '<!--LANG:zh-->\n中文说明\n<!--LANG:END-->\n<!--LANG:en-->\nEnglish notes\n<!--LANG:END-->';
+  check('语言前缀匹配（zh-CN → zh 块）',
+    localizeReleaseNotes(bilingual, 'zh-CN') === '中文说明', JSON.stringify(localizeReleaseNotes(bilingual, 'zh-CN')));
+  check('精确语言匹配（en → en 块）', localizeReleaseNotes(bilingual, 'en') === 'English notes');
+  check('未知语言回退 en', localizeReleaseNotes(bilingual, 'ja') === 'English notes');
+  check('语言大小写不敏感', localizeReleaseNotes(bilingual, 'ZH') === '中文说明');
+  check('无标记原文返回', localizeReleaseNotes('纯文本说明', 'zh') === '纯文本说明');
+  check('非字符串返回原值', localizeReleaseNotes(null, 'zh') === null && localizeReleaseNotes(undefined, 'zh') === undefined);
+  const enOnly = '<!--LANG:en-->\nOnly English\n<!--LANG:END-->';
+  check('仅 en 块任意语言回退 en', localizeReleaseNotes(enOnly, 'fr') === 'Only English');
+  const broken = '<!--LANG:zh-->\n中文开头无结束标记\n';
+  check('残缺标记 strip 兜底（与旧行为一致）',
+    localizeReleaseNotes(broken, 'zh') === '\n中文开头无结束标记\n', JSON.stringify(localizeReleaseNotes(broken, 'zh')));
+}
+
 console.log('== 测试 12: 页内查找会话状态机（find.js 纯函数） ==');
 {
   const { createFindSession } = await import('../src/main/find.js');

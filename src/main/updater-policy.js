@@ -45,3 +45,26 @@ export function shouldLogProgress(percent, lastLoggedPercent = -1) {
   const lastMilestone = Math.floor((lastLoggedPercent ?? -1) / 25) * 25;
   return milestone > lastMilestone;
 }
+
+/**
+ * 多语言 release notes 本地化（纯函数）：按 `<!--LANG:xx-->…<!--LANG:END-->` 标记块
+ * 选择与语言匹配的段落（大小写不敏感、前缀匹配：zh-CN → zh）。
+ * 无匹配 → 回退 en → 首个块；无完整标记块 → strip 全部标记返回原文（与旧行为一致）。
+ */
+export function localizeReleaseNotes(notes, language) {
+  if (typeof notes !== 'string' || !notes.includes('<!--LANG:')) return notes;
+  const want = String(language ?? '').toLowerCase().split('-')[0];
+  const blocks = [];
+  const re = /<!--LANG:([A-Za-z-]+)-->\s*([\s\S]*?)<!--LANG:END-->/g;
+  let m;
+  while ((m = re.exec(notes)) !== null) {
+    blocks.push({ lang: m[1].toLowerCase(), text: m[2].trim() });
+  }
+  if (blocks.length === 0) {
+    return notes.replace(/<!--LANG:[\s\S]*?-->|<!--LANG:END-->/g, '');
+  }
+  const match = blocks.find((b) => b.lang === want)
+    ?? blocks.find((b) => b.lang === 'en')
+    ?? blocks[0];
+  return match.text;
+}

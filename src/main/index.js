@@ -42,6 +42,7 @@ const statuses = new Map();  // appId -> { status, detail, updatedAt }
 let activeId = null;
 let modalOpen = false;       // 弹窗打开时隐藏 WebContentsView（原生视图会遮挡 HTML 弹窗）
 let sidebarCollapsed = false; // 侧边栏收起态（持久化于 settings.sidebarCollapsed，缺失默认展开）
+let autoUpdateEnabled = true; // 更新偏好开关（持久化于 settings.autoUpdateEnabled，缺失默认开，帮助菜单控制）
 let expandView = null;        // 收起态下窗口左缘的浮动展开按钮（原生覆盖视图，盖在应用视图之上）
 let findView = null;          // 页内查找栏覆盖视图（原生覆盖视图，盖在应用视图之上）
 let findViewVisible = false;  // 查找栏可见性跟踪（WebContentsView 无 isVisible()，需自行维护）
@@ -419,6 +420,14 @@ function buildMenu() {
           label: '检查更新…',
           click: () => win?.webContents.send('ui:check-update'),
         },
+        { type: 'separator' },
+        {
+          // 自动检查开关：关闭后调度循环空转（不再自动检查），手动「检查更新」不受影响
+          label: '自动检查更新',
+          type: 'checkbox',
+          checked: autoUpdateEnabled,
+          click: (item) => toggleAutoUpdate(item.checked),
+        },
       ],
     },
   ];
@@ -427,6 +436,16 @@ function buildMenu() {
 
 function rebuildMenu() {
   Menu.setApplicationMenu(buildMenu());
+}
+
+// 更新偏好开关（帮助菜单 checkbox）：持久化 + 立即作用于更新服务 + 重建菜单
+async function toggleAutoUpdate(enabled) {
+  autoUpdateEnabled = !!enabled;
+  try {
+    await store.updateSettings({ autoUpdateEnabled });
+    await updater?.setAutoUpdateEnabled(autoUpdateEnabled);
+  } catch { /* 持久化失败不阻塞 UI */ }
+  rebuildMenu();
 }
 
 // ---------------------------------------------------------------- IPC
@@ -829,6 +848,7 @@ app.whenReady().then(async () => {
   registerIpc(); // 先注册 IPC，渲染进程加载后会立即调用
   dbg('ready: ipc registered');
   sidebarCollapsed = (await store.load()).settings.sidebarCollapsed === true; // 缺失默认展开
+  autoUpdateEnabled = (await store.load()).settings.autoUpdateEnabled !== false; // 缺失默认开启
   await createWindow();
   layoutExpandView(); // 若上次为收起态，启动即显示浮动展开按钮
   dbg('ready: window created');
@@ -856,6 +876,13 @@ app.on('before-quit', () => {
       monitor?.stopAll();
     } catch { /* ignore */ }
   }
+});
+
+app.on('will-quit', () => {
+  // 更新服务退出清理：清除调度定时器、摘除 autoUpdater 监听器
+  try {
+    updater?.dispose();
+  } catch { /* ignore */ }
 });
 
 app.on('window-all-closed', () => {

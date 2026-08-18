@@ -1,0 +1,10 @@
+# dev-app-update.yml — 开发态更新调试配置
+# 开发态（未打包）下 updater 读取本文件（forceDevUpdateConfig = !app.isPackaged）：
+#   1. 用 electron-builder 构建任意平台产物（如 `npx electron-builder --mac zip --publish never`）
+#   2. 把产物 + 生成的 latest*.yml 放入本地静态服务器目录，起服务（如 `python3 -m http.server 8123`）
+#   3. 把下面 url 指向该服务器，开发态启动应用，菜单「帮助 → 检查更新…」即走完整更新链路
+#      （检查 → 下载 → 取消 → 就绪提示），webdeck.log 可见全部内部日志
+# 打包态不读取本文件（使用 electron-builder 生成的 app-update.yml，指向 GitHub Releases）。
+provider: generic
+url: http://127.0.0.1:8123
+updaterCacheDirName: webdeck-updater

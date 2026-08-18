@@ -1,5 +1,5 @@
 // updater.js — 主进程更新服务（electron-updater 封装，精简版 AppUpdaterService）
-// 方案参考 Cherry Studio（调研：.tmp-cherry-research/REPORT.md）：
+// 方案参考 Cherry Studio（调研：.tmp-cherry-research/REPORT.md + docs/research/cherry-studio-update-deep-dive.md）：
 //   - 主进程调度：启动延迟首查 + 周期 ± 抖动 + 失败指数退避（策略见 updater-policy.js）
 //   - autoInstallOnAppQuit = false：必须用户点"立即安装"
 //   - Windows 未签名产物：verifyUpdateCodeSignature = false
@@ -9,10 +9,17 @@
 //   - 关机/退出保护：powerMonitor shutdown + app before-quit → autoDownload = false 并取消在途下载
 //   - logSink 注入：检查/下载/安装/错误事件写入 webdeck.log（与主进程链路同一落盘通道）
 //   - CancellationToken 贯穿下载 + cancelDownload()（IPC updater:cancel）
+// 对齐项（add-update-parity）：
+//   - autoUpdater.logger 注入：electron-updater 内部日志（下载源/差分回退/staging）一并落盘
+//   - forceDevUpdateConfig = !isPackaged：开发态读取 dev-app-update.yml，可本地调试更新链路
+//   - 系统通知：发现新版/下载完成（Notification.isSupported 守卫，点击聚焦窗口）
+//   - release notes 多语言本地化（localizeReleaseNotes，按 app.getLocale()）
+//   - 偏好开关：autoDownload 由 settings.autoUpdateEnabled 驱动；调度每 tick 门控（手动检查不受限）
+//   - dispose()：退出时清理调度定时器与 autoUpdater 监听器
 // Electron 主进程 ESM 加载器不识别 CJS 的 named export，须默认导入后解构
 import updaterPkg from 'electron-updater';
 const { autoUpdater, NsisUpdater } = updaterPkg;
-import { app, shell, ipcMain, powerMonitor } from 'electron';
+import { app, shell, ipcMain, powerMonitor, Notification } from 'electron';
 import {
   CHECK_INTERVAL_MS,
   INITIAL_CHECK_DELAY_MS,
@@ -23,6 +30,7 @@ import {
   isPortableEnv,
   installDirectoryFor,
   shouldLogProgress,
+  localizeReleaseNotes,
 } from './updater-policy.js';
 
 /**
@@ -30,23 +38,70 @@ import {
  * @param {{
  *   getWindow: () => import('electron').BrowserWindow | null,
  *   logSink?: (line: string) => void,   // 落盘日志通道（fileLog.log），未注入时静默
+ *   getAutoUpdateEnabledPref?: () => Promise<boolean>,  // 读取偏好开关（默认 true）
+ *   setAutoUpdateEnabledPref?: (enabled: boolean) => Promise<unknown>,  // 持久化偏好开关
  * }} deps
  */
-export function createUpdater({ getWindow, logSink }) {
+export function createUpdater({
+  getWindow,
+  logSink,
+  getAutoUpdateEnabledPref = async () => true,
+  setAutoUpdateEnabledPref = async () => {},
+}) {
   let timer = null;
   let failures = 0;
   let started = false;
+  let disposed = false;
+  let autoUpdateEnabled = true; // 偏好开关（settings.autoUpdateEnabled，默认开）
   let cancelToken = null; // 进行中下载的取消令牌（来自 checkForUpdates 结果，autoDownload=true 时驱动本次下载）
   let lastLoggedPct = -1; // 下载进度落盘节流：最近一次已写入的百分比
+  const listeners = []; // [event, handler] 对，dispose() 时摘除
 
   const log = (line) => logSink?.(`[updater] ${line}`);
+
+  // electron-updater 内部日志（检查结果/下载源 URL/差分回退/staging 校验等）一并落盘
+  autoUpdater.logger = {
+    info: (msg) => log(`info ${String(msg ?? '')}`),
+    warn: (msg) => log(`warn ${String(msg ?? '')}`),
+    error: (msg) => log(`error ${String(msg ?? '')}`),
+    debug: (msg) => log(`debug ${String(msg ?? '')}`),
+  };
+  // 开发态读取仓库根 dev-app-update.yml（否则 checkForUpdates 直接跳过），打包态不受影响
+  autoUpdater.forceDevUpdateConfig = !app.isPackaged;
 
   const broadcast = (channel, payload = {}) => {
     getWindow()?.webContents.send('updater:event', { type: channel, ...payload });
   };
 
+  /** 系统通知（isSupported 守卫）：发现新版/下载完成时提醒，点击聚焦主窗口。 */
+  function notify(title, body) {
+    if (!Notification.isSupported()) return;
+    const n = new Notification({ title, body });
+    n.on('click', () => {
+      const w = getWindow();
+      if (!w) return;
+      if (w.isMinimized()) w.restore();
+      w.show();
+      w.focus();
+    });
+    n.show();
+  }
+
+  /** 广播前处理 release info：release notes 按应用语言本地化（Cherry processReleaseInfo 等价物）。 */
+  function processReleaseInfo(info) {
+    if (info?.releaseNotes && typeof info.releaseNotes === 'string') {
+      return { ...info, releaseNotes: localizeReleaseNotes(info.releaseNotes, app.getLocale()) };
+    }
+    return info;
+  }
+
+  const on = (event, handler) => {
+    autoUpdater.on(event, handler);
+    listeners.push([event, handler]);
+  };
+
   function configure() {
-    autoUpdater.autoDownload = true;
+    autoUpdater.autoDownload = autoUpdateEnabled;
     // 绝不随退出自动安装：重启时意外更新 / 关机时安装损坏 / 强制关机时应用被卸载
     autoUpdater.autoInstallOnAppQuit = false;
     autoUpdater.allowDowngrade = false;
@@ -80,8 +135,10 @@ export function createUpdater({ getWindow, logSink }) {
       }
       log(`${why}: autoDownload disabled, in-flight download cancelled`);
     };
-    powerMonitor.on('shutdown', () => stopDownloads('shutdown'));
-    app.on('before-quit', () => stopDownloads('before-quit'));
+    powerMonitor.on('shutdown', stopDownloads);
+    app.on('before-quit', stopDownloads);
+    listeners.push(['powerMonitor:shutdown', stopDownloads]);
+    listeners.push(['app:before-quit', stopDownloads]);
   }
 
   async function performCheck() {
@@ -101,6 +158,12 @@ export function createUpdater({ getWindow, logSink }) {
   function scheduleNext(delay) {
     clearTimeout(timer);
     timer = setTimeout(async () => {
+      if (disposed) return;
+      if (!autoUpdateEnabled) {
+        // 偏好关闭：循环空转（排程不取消），重新开启后自动恢复——与 Cherry 每 tick 门控一致
+        scheduleNext(nextCheckDelay(CHECK_INTERVAL_MS));
+        return;
+      }
       try {
         await performCheck();
         failures = 0;
@@ -112,24 +175,23 @@ export function createUpdater({ getWindow, logSink }) {
     }, delay);
   }
 
-  /** 启动自动检查调度（打包版 + 非 portable）。 */
-  function start() {
-    if (started) return;
-    if (!app.isPackaged || isPortableEnv()) return; // 开发版/portable 跳过自动检查
-    started = true;
-    configure();
-    protectShutdown();
-    autoUpdater.on('checking-for-update', () => log('checking-for-update'));
-    autoUpdater.on('update-available', (info) => {
+  /** 挂载 autoUpdater 事件监听（registerIpc 恒调用——开发态手动检查同样需要事件管道，与 Cherry onInit 挂载一致）。 */
+  let listenersAttached = false;
+  function attachListeners() {
+    if (listenersAttached) return;
+    listenersAttached = true;
+    on('checking-for-update', () => log('checking-for-update'));
+    on('update-available', (info) => {
       lastLoggedPct = -1; // 新一轮下载：重置进度节流
       log(`update-available version=${info?.version}`);
-      broadcast('available', info);
+      notify('WebDeck 更新', `发现新版本 v${info?.version}`);
+      broadcast('available', processReleaseInfo(info));
     });
-    autoUpdater.on('update-not-available', () => {
+    on('update-not-available', () => {
       log('update-not-available');
       broadcast('not_available');
     });
-    autoUpdater.on('download-progress', (p) => {
+    on('download-progress', (p) => {
       const pct = p?.percent ?? 0;
       if (shouldLogProgress(pct, lastLoggedPct)) {
         lastLoggedPct = pct;
@@ -137,25 +199,36 @@ export function createUpdater({ getWindow, logSink }) {
       }
       broadcast('download_progress', p);
     });
-    autoUpdater.on('update-downloaded', (info) => {
+    on('update-downloaded', (info) => {
       lastLoggedPct = -1;
       log(`update-downloaded version=${info?.version}`);
-      broadcast('downloaded', info);
+      notify('WebDeck 更新', '新版本已下载完成，可立即安装');
+      broadcast('downloaded', processReleaseInfo(info));
     });
-    autoUpdater.on('update-cancelled', (info) => {
+    on('update-cancelled', (info) => {
       cancelToken = null;
       lastLoggedPct = -1;
       log(`update-cancelled version=${info?.version}`);
       broadcast('cancelled', { version: info?.version });
     });
-    autoUpdater.on('error', (err) => {
+    on('error', (err) => {
       log(`error ${String(err?.message ?? err)}`);
       broadcast('error', { message: String(err?.message ?? err) });
     });
+  }
+
+  /** 启动自动检查调度（打包版 + 非 portable）。 */
+  async function start() {
+    if (started || disposed) return;
+    if (!app.isPackaged || isPortableEnv()) return; // 开发版/portable 跳过自动检查
+    started = true;
+    autoUpdateEnabled = (await getAutoUpdateEnabledPref()) !== false;
+    configure();
+    protectShutdown();
     scheduleNext(INITIAL_CHECK_DELAY_MS);
   }
 
-  /** 手动检查：明确反馈（成功/失败），不驱动退避调度。 */
+  /** 手动检查：明确反馈（成功/失败），不驱动退避调度；不受偏好开关限制。 */
   async function manualCheck() {
     try {
       await performCheck();
@@ -188,13 +261,47 @@ export function createUpdater({ getWindow, logSink }) {
     return { ok: false, error: '没有进行中的下载' };
   }
 
-  /** 注册更新相关 IPC（检查/安装/取消/打开下载页）。 */
+  /** 偏好开关：立即生效（autoDownload）并持久化；手动检查不受影响。 */
+  async function setAutoUpdateEnabled(enabled) {
+    autoUpdateEnabled = !!enabled;
+    autoUpdater.autoDownload = autoUpdateEnabled;
+    await setAutoUpdateEnabledPref(autoUpdateEnabled);
+    log(`auto-update ${autoUpdateEnabled ? 'enabled' : 'disabled'}`);
+    return { ok: true, autoUpdateEnabled };
+  }
+
+  /** 退出清理：清除调度定时器、摘除全部监听器（含关机保护）。 */
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    clearTimeout(timer);
+    for (const [event, handler] of listeners) {
+      if (event === 'powerMonitor:shutdown') powerMonitor.removeListener('shutdown', handler);
+      else if (event === 'app:before-quit') app.removeListener('before-quit', handler);
+      else autoUpdater.removeListener(event, handler);
+    }
+    listeners.length = 0;
+    log('disposed');
+  }
+
+  /** 注册更新相关 IPC（检查/安装/取消/开关/打开下载页）并挂载事件监听（幂等）。 */
   function registerIpc() {
     ipcMain.handle('updater:check', () => manualCheck());
     ipcMain.handle('updater:quit-install', () => { quitAndInstall(); return { ok: true }; });
     ipcMain.handle('updater:cancel', () => cancelDownload());
+    ipcMain.handle('updater:set-auto-update', (_e, enabled) => setAutoUpdateEnabled(enabled));
     ipcMain.handle('updater:open-download', () => { openDownloadPage(); return { ok: true }; });
+    attachListeners();
   }
 
-  return { start, manualCheck, quitAndInstall, cancelDownload, openDownloadPage, registerIpc };
+  return {
+    start,
+    manualCheck,
+    quitAndInstall,
+    cancelDownload,
+    setAutoUpdateEnabled,
+    dispose,
+    openDownloadPage,
+    registerIpc,
+  };
 }

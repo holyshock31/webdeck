@@ -404,6 +404,23 @@ function closeLogs() {
 let updState = { available: false, downloaded: false, progress: null, info: null, error: null };
 let manualCheck = false; // 手动检查标志：仅手动场景才提示"已是最新"/错误
 
+// 更新状态持久化（localStorage）：跨重启记住「下载完成的版本」与「忽略的版本」
+const UPDATE_STATE_KEY = 'webdeck.updateState';
+let updPersist = { ignoredVersion: null, downloadedVersion: null };
+function loadUpdateState() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(UPDATE_STATE_KEY) ?? 'null');
+    return {
+      ignoredVersion: typeof parsed?.ignoredVersion === 'string' ? parsed.ignoredVersion : null,
+      downloadedVersion: typeof parsed?.downloadedVersion === 'string' ? parsed.downloadedVersion : null,
+    };
+  } catch { return { ignoredVersion: null, downloadedVersion: null }; }
+}
+function saveUpdateState(patch) {
+  updPersist = { ...updPersist, ...patch };
+  try { localStorage.setItem(UPDATE_STATE_KEY, JSON.stringify(updPersist)); } catch { /* 持久化失败忽略 */ }
+}
+
 function updBanner(text, btnText, btnCb) {
   $('#update-banner-text').textContent = text;
   const btn = $('#update-banner-btn');
@@ -437,17 +454,26 @@ function openUpdateModal() {
     actions.append(later, install);
   } else {
     $('#modal-update-title').textContent = `发现新版本${version}`;
+    // releaseNotes 已由主进程按应用语言本地化（localizeReleaseNotes），直接显示
     body.textContent = info.releaseNotes && info.releaseNotes !== 'null'
-      ? String(info.releaseNotes).replace(/<!--LANG:[\s\S]*?-->|<!--LANG:END-->/g, '')
+      ? String(info.releaseNotes)
       : `有新版本${version}可用。`;
     const close = document.createElement('button');
     close.type = 'button'; close.className = 'btn'; close.textContent = '关闭';
     close.onclick = closeUpdateModal;
+    const ignore = document.createElement('button');
+    ignore.type = 'button'; ignore.className = 'btn'; ignore.textContent = '忽略此版本';
+    ignore.onclick = () => {
+      // 忽略后该版本不再提示（含重启后）；再次「检查更新」仍可重新下载
+      if (info.version) saveUpdateState({ ignoredVersion: String(info.version) });
+      hideUpdBanner();
+      closeUpdateModal();
+    };
     const download = document.createElement('button');
     download.type = 'button'; download.className = 'btn btn-primary';
     download.textContent = '打开下载页';
     download.onclick = () => webdeck.openDownloadPage();
-    actions.append(close, download);
+    actions.append(close, ignore, download);
   }
   $('#modal-update').classList.remove('hidden');
   webdeck.setModalOpen(true).catch(() => {});
@@ -467,12 +493,20 @@ async function doCheckUpdate() {
 }
 
 function initUpdater() {
+  updPersist = loadUpdateState();
+  // 下载完成未安装（跨重启）：直接显示可安装提示条（启动检查会复用缓存并重新确认）
+  if (updPersist.downloadedVersion) {
+    updState = { ...updState, available: true, downloaded: true, progress: 100, info: { version: updPersist.downloadedVersion } };
+    updBanner('新版本已就绪，可立即安装', '立即安装', () => webdeck.quitAndInstall());
+  }
   webdeck.onCheckUpdateRequest(() => doCheckUpdate());
   webdeck.onUpdaterEvent((ev) => {
     switch (ev.type) {
       case 'available':
         updState = { ...updState, available: true, info: ev.info ?? ev, progress: null };
         setCancelBtnVisible(false);
+        // 用户已「忽略此版本」：记录状态但不打扰（再次检查更新仍可重新下载）
+        if (ev.version && String(ev.version) === updPersist.ignoredVersion) break;
         updBanner(`发现新版本${ev.version ? ' v' + ev.version : ''}`, '查看', openUpdateModal);
         break;
       case 'not_available':
@@ -490,6 +524,9 @@ function initUpdater() {
         hideUpdBanner();
         break;
       case 'downloaded':
+        // 已忽略的版本下载完成：不提示（与 available 的忽略语义一致）
+        if (ev.version && String(ev.version) === updPersist.ignoredVersion) break;
+        if (ev.version) saveUpdateState({ downloadedVersion: String(ev.version) });
         updState = { ...updState, downloaded: true, available: true, progress: 100 };
         setCancelBtnVisible(false);
         updBanner('新版本已就绪，可立即安装', '立即安装', () => webdeck.quitAndInstall());

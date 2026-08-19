@@ -10,6 +10,7 @@
     "start": "bash scripts/dev.sh",
     "smoke": "electron . --smoke",
     "test": "node scripts/test-core.js",
+    "e2e": "node e2e/run.cjs",
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac",
     "dist:win": "electron-builder --win",
@@ -20,7 +21,8 @@
   },
   "devDependencies": {
     "electron": "^37.0.0",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "playwright-core": "^1.62.1"
   },
   "build": {
     "appId": "com.webdeck.app",

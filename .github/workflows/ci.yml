@@ -28,10 +28,15 @@ jobs:
         run: npm test
 
       # Linux runner 无显示器：xvfb-run 提供虚拟显示；--no-sandbox 规避 runner 环境
-      # 下 Chromium SUID sandbox 权限问题（仅冒烟测试用，不影响产物行为）。
+      # 下 Chromium SUID sandbox 权限问题（仅冒烟/E2E 测试用，不影响产物行为）。
       - name: Smoke test (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a npm run smoke -- --no-sandbox
+
+      # E2E（Playwright + Electron）：CDP 注入输入事件，不依赖物理鼠标/真实屏幕。
+      - name: E2E test (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run e2e -- --no-sandbox
 
       - name: Smoke test (macOS / Windows)
         if: runner.os != 'Linux'

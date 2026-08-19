@@ -42,7 +42,7 @@
 
 ## 记录
 
-执行完成后把结果（通过/失败项）写回本清单或提交到 `openspec/changes/support-cross-platform/verify.md`（由 `/spec verify` 生成）。
+执行完成后把结果（通过/失败项）写回本清单或提交到 `openspec/changes/support-cross-platform/verify.md`（归档前人工核验的验收记录）。
 
 ---
 

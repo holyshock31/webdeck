@@ -399,7 +399,7 @@ artifacts: "dist/*.exe,dist/*.zip,dist/*.dmg,dist/*.AppImage,dist/*.snap,
 5. **Cloudflare Worker 同步 R2 的整套"自建分发"**：对 WebDeck 不必要（GitHub Releases 直连即可），但若未来 WebDeck 也遇到"国内下载慢"，可原样照搬这套 worker 脚本（开源、幂等、自动清理）。
 6. **`noCache` patch**：Cherry 的 electron-updater patch 是为自家 CDN 缓存服务的；WebDeck 直连 GitHub Releases 无需此 patch，保持上游原版即可。
 
-### 6.3 建议的最小落地清单（供后续 /spec 流程参考，不在此次实现）
+### 6.3 建议的最小落地清单（供后续 /openspec 流程参考，不在此次实现）
 
 - 主进程：`AppUpdaterService` 精简版（调度 + configure + check + 事件广播 + `quitAndInstall(true, true)` + `autoInstallOnAppQuit=false` + `allowDowngrade=false`）。
 - 配置：`electron-builder.yml` 增加 `publish: { provider: github, owner, repo }`；Win 增 `verifyUpdateCodeSignature: false`；mac 保持 dmg/zip（zip 用于更新）但**默认只提示不自动装**（未签名）。

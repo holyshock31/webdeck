@@ -119,7 +119,8 @@ git tag v0.2.0 && git push origin v0.2.0
 ### 自动更新
 
 - **Windows 安装版**：内置自动更新（electron-updater）——启动后自动检查（约每 6 小时，失败自动退避重试），发现新版本自动下载并提示，**用户点击"立即安装"才执行**（退出应用不自动安装）；也可通过菜单「帮助 → 检查更新…」手动检查
-- **macOS / portable 版**：检测到新版本时提示并引导**打开 Releases 下载页**手动下载（macOS 自动更新依赖签名，未签名版本不做自动安装）
+- **macOS（含未签名 `-unsigned` 产物）**：同样内置自动更新——检测到新版本自动下载，点击"立即安装"完成安装并自动重启。unsigned 产物的更新包在发布流水线中经**完整 ad-hoc 签名**（`codesign --verify` 可校验、Squirrel.Mac 可接受）；若安装阶段失败（签名校验异常等），界面会明确提示失败原因并提供**「打开下载页」**兜底（跳转 GitHub Releases 手动下载），不再静默无反馈
+- **portable 版**：不做自动检查，更新方式为手动下载新版本
 - **自定义安装目录支持（Windows）**：安装包允许更改安装目录（`allowToChangeInstallationDirectory`），更新时会安装到**当前 exe 所在目录**（自动对齐，不会装回默认目录造成双实例）
 - **关机/退出保护**：系统关机或应用退出时停止发起新下载并取消进行中的下载，不残留半成品文件导致下次启动更新损坏
 - **下载可取消**：下载中提示条出现「取消」按钮（经 IPC 中止下载）；取消后应用正常使用，可再次「检查更新」重新下载
@@ -133,7 +134,7 @@ git tag v0.2.0 && git push origin v0.2.0
 
 ### 签名决策（当前：macOS 未签名 / Windows 未签名）
 
-- **macOS**：Developer ID 签名 + 公证需要 Apple Developer 账号（$99/年）与 App 专用密码。未配置时构建出的产物带 `-unsigned` 标记，首次打开会被 Gatekeeper 拦截——绕过方法见下方常见问题。配置方式：仓库 secrets 设 `CSC_LINK` / `CSC_KEY_PASSWORD`（证书）与 `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`（公证），CI 检测到后自动签名 + 公证
+- **macOS**：Developer ID 签名 + 公证需要 Apple Developer 账号（$99/年）与 App 专用密码。未配置时构建出的产物带 `-unsigned` 标记（表示未用 Developer ID 签名，构建流水线已对 .app 做**完整 ad-hoc 签名**，自动更新可正常安装；仅首次手动安装 dmg 会被 Gatekeeper 拦截，绕过方法见下方常见问题）。配置方式：仓库 secrets 设 `CSC_LINK` / `CSC_KEY_PASSWORD`（证书）与 `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`（公证），CI 检测到后自动签名 + 公证
 - **Windows**：当前决策「**先不签**」（零成本）——未签名 exe 首次运行会有 SmartScreen 提示，绕过方法见下方常见问题；后续分发规模上来可升级 **Azure Trusted Signing**（微软云签名，低成本、信誉建立快），升级路径：配置该服务后把签名步骤接入 release.yml
 - 两个决策都会随发布演进更新：产物一旦对外分发，建议优先补齐 macOS 签名公证（Gatekeeper 拦截体验最差）
 
@@ -156,7 +157,7 @@ git tag v0.2.0 && git push origin v0.2.0
   xattr -dr com.apple.quarantine /Applications/WebDeck.app
   ```
   注意：这是「先不签」决策的已知代价；配置签名 secrets 后产出的 dmg 无需此步骤
-- **下载的产物未签名标记 `-unsigned`**：表示该次构建未配置签名 secrets（见「发布流程 → 签名决策」），功能不受影响，按上面两条对应的指引放行
+- **下载的产物未签名标记 `-unsigned`**：表示该次构建未配置 Developer ID 签名 secrets（见「发布流程 → 签名决策」），产物已含完整 ad-hoc 签名——**应用内自动更新可正常安装**；仅手动安装 dmg 时按上面两条对应的指引放行
 
 ## 路线图
 

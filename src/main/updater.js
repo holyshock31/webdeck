@@ -241,7 +241,18 @@ export function createUpdater({
   /** 用户点击"立即安装"：静默安装并重启。 */
   function quitAndInstall() {
     log('quit-and-install invoked');
-    setImmediate(() => autoUpdater.quitAndInstall(true, true));
+    // 同步抛出与异步失败（Squirrel.Mac 签名校验等）都要上报：
+    // 异步失败经 nativeUpdater 'error' → 既有 on('error') 广播；同步异常在此捕获。
+    // 渲染层在"已下载待安装"状态下收到 error 会展示失败原因与"打开下载页"兜底，
+    // 避免 macOS 安装失败时界面静默无反馈（v0.1.14 事故）。
+    setImmediate(() => {
+      try {
+        autoUpdater.quitAndInstall(true, true);
+      } catch (err) {
+        log(`quit-and-install error ${String(err?.message ?? err)}`);
+        broadcast('error', { message: String(err?.message ?? err) });
+      }
+    });
   }
 
   /** 退化路径：macOS（未签名）/portable 等不自动安装，引导打开 Releases 下载页。 */

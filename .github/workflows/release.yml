@@ -56,8 +56,20 @@ jobs:
         # 注意：必须用 block scalar（|）保留真实换行——普通标量会把行尾 `\` 折叠成
         # `\ `（反斜杠+空格），bash 视其为转义空格，导致参数带前导空格被 yargs 拒绝
         # （Unknown argument，v0.1.11 首次 CI 事故）。
+        # 无证书分支产出可被 Squirrel.Mac 接受的更新包（fix-mac-unsigned-update）：
+        #   1) --mac dir 只构建 .app（不直接出 zip）；
+        #   2) 对 .app 做完整 ad-hoc 签名（密封资源）——否则 codesign --verify 报
+        #      "code has no resources but signature indicates they must be present"，
+        #      Squirrel.Mac 安装前签名校验失败、自动更新静默中止（v0.1.14 事故）；
+        #   3) --prepackaged 从已签名 .app 出 dmg/zip/latest-mac.yml（元数据与实际
+        #      资产天然一致，artifactName 保持 -unsigned 后缀约定不变）；
+        #   4) 出包前 codesign 断言：校验失败即 job 失败，坏签名包进不了 release。
         run: |
-          npx electron-builder --mac --publish never \
+          npx electron-builder --mac dir --publish never
+          APP_PATH="$(find dist -maxdepth 2 -name '*.app' -type d | head -1)"
+          codesign --force --deep --sign - "$APP_PATH"
+          codesign --verify --deep --strict "$APP_PATH"
+          npx electron-builder --mac --prepackaged "$APP_PATH" --publish never \
             --config.mac.artifactName=WebDeck-\${version}-\${arch}-mac\${env.UNSIGNED_SUFFIX}.\${ext}
         env:
           UNSIGNED_SUFFIX: '-unsigned'

@@ -455,7 +455,9 @@ function closeLogs() {
 // ---------------------------------------------------------------- 更新（electron-updater）
 
 // 更新状态：available / downloading(progress) / downloaded / error / 空闲
-let updState = { available: false, downloaded: false, progress: null, info: null, error: null };
+// installError：下载完成后的安装阶段失败原因（macOS 签名校验失败等）——非空时
+// 界面展示失败信息与「打开下载页」兜底，不再静默（fix-mac-unsigned-update）
+let updState = { available: false, downloaded: false, progress: null, info: null, error: null, installError: null };
 let manualCheck = false; // 手动检查标志：仅手动场景才提示"已是最新"/错误
 
 // 更新状态持久化（localStorage）：跨重启记住「下载完成的版本」与「忽略的版本」
@@ -497,15 +499,31 @@ function openUpdateModal() {
   const info = updState.info ?? {};
   const version = info.version ? ` v${info.version}` : '';
   if (updState.downloaded) {
-    $('#modal-update-title').textContent = `新版本${version}已就绪`;
-    body.textContent = '更新包已下载完成，安装后应用将自动重启。';
-    const later = document.createElement('button');
-    later.type = 'button'; later.className = 'btn'; later.textContent = '稍后';
-    later.onclick = () => { updState = { ...updState, downloaded: false }; closeUpdateModal(); };
-    const install = document.createElement('button');
-    install.type = 'button'; install.className = 'btn btn-primary'; install.textContent = '立即安装';
-    install.onclick = () => webdeck.quitAndInstall();
-    actions.append(later, install);
+    if (updState.installError) {
+      // 安装阶段失败（macOS 签名校验失败等）：展示原因，可重试安装或打开下载页兜底
+      $('#modal-update-title').textContent = '安装更新失败';
+      body.textContent = `更新包已下载但安装失败：${updState.installError}`;
+      const later = document.createElement('button');
+      later.type = 'button'; later.className = 'btn'; later.textContent = '稍后';
+      later.onclick = () => { updState = { ...updState, installError: null }; closeUpdateModal(); };
+      const retry = document.createElement('button');
+      retry.type = 'button'; retry.className = 'btn'; retry.textContent = '重试安装';
+      retry.onclick = () => webdeck.quitAndInstall();
+      const dl = document.createElement('button');
+      dl.type = 'button'; dl.className = 'btn btn-primary'; dl.textContent = '打开下载页';
+      dl.onclick = () => webdeck.openDownloadPage();
+      actions.append(later, retry, dl);
+    } else {
+      $('#modal-update-title').textContent = `新版本${version}已就绪`;
+      body.textContent = '更新包已下载完成，安装后应用将自动重启。';
+      const later = document.createElement('button');
+      later.type = 'button'; later.className = 'btn'; later.textContent = '稍后';
+      later.onclick = () => { updState = { ...updState, downloaded: false, installError: null }; closeUpdateModal(); };
+      const install = document.createElement('button');
+      install.type = 'button'; install.className = 'btn btn-primary'; install.textContent = '立即安装';
+      install.onclick = () => webdeck.quitAndInstall();
+      actions.append(later, install);
+    }
   } else {
     $('#modal-update-title').textContent = `发现新版本${version}`;
     // releaseNotes 已由主进程按应用语言本地化（localizeReleaseNotes），直接显示
@@ -557,7 +575,7 @@ function initUpdater() {
   webdeck.onUpdaterEvent((ev) => {
     switch (ev.type) {
       case 'available':
-        updState = { ...updState, available: true, info: ev.info ?? ev, progress: null };
+        updState = { ...updState, available: true, info: ev.info ?? ev, progress: null, installError: null };
         setCancelBtnVisible(false);
         // 用户已「忽略此版本」：记录状态但不打扰（再次检查更新仍可重新下载）
         if (ev.version && String(ev.version) === updPersist.ignoredVersion) break;
@@ -568,12 +586,13 @@ function initUpdater() {
         break;
       case 'download_progress':
         updState.progress = ev.percent ?? 0;
+        if (updState.installError) updState = { ...updState, installError: null }; // 新一轮下载进行中：清除陈旧安装错误
         setCancelBtnVisible(true);
         updBanner(`正在下载更新… ${Math.round(updState.progress)}%`, '查看', openUpdateModal);
         break;
       case 'cancelled':
         // 下载被取消（用户点「取消」/关机保护）：清进度并收起提示条，更新仍可用可重查
-        updState = { ...updState, progress: null, downloaded: false };
+        updState = { ...updState, progress: null, downloaded: false, installError: null };
         setCancelBtnVisible(false);
         hideUpdBanner();
         break;
@@ -581,16 +600,26 @@ function initUpdater() {
         // 已忽略的版本下载完成：不提示（与 available 的忽略语义一致）
         if (ev.version && String(ev.version) === updPersist.ignoredVersion) break;
         if (ev.version) saveUpdateState({ downloadedVersion: String(ev.version) });
-        updState = { ...updState, downloaded: true, available: true, progress: 100 };
+        updState = { ...updState, downloaded: true, available: true, progress: 100, installError: null };
         setCancelBtnVisible(false);
         updBanner('新版本已就绪，可立即安装', '立即安装', () => webdeck.quitAndInstall());
         if (manualCheck) openUpdateModal();
         manualCheck = false;
         break;
-      case 'error':
+      case 'error': {
         setCancelBtnVisible(false);
-        if (manualCheck) { alert(`更新失败：${ev.message ?? '未知错误'}`); manualCheck = false; }
+        const msg = ev.message ?? '未知错误';
+        if (manualCheck) { alert(`更新失败：${msg}`); manualCheck = false; }
+        // 已下载待安装状态下的错误（macOS 安装阶段签名校验失败等）：
+        // 无论自动/手动场景都必须可见——提示条展示原因，「打开下载页」兜底，
+        // 弹窗内可重试安装（fix-mac-unsigned-update，此前静默无反馈）
+        if (updState.downloaded) {
+          updState = { ...updState, installError: msg };
+          updBanner('安装更新失败，可重试或打开下载页', '打开下载页', () => webdeck.openDownloadPage());
+          openUpdateModal();
+        }
         break;
+      }
       default: break;
     }
   });

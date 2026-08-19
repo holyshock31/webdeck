@@ -406,7 +406,6 @@ function initSidebarResizer() {
     lastValidWidth = sidebarWidth; // 拖动起点即"进入阈值区前的合法宽度"基线
     try { resizer.setPointerCapture(e.pointerId); } catch { /* 指针已失效等边缘情况：不阻断拖动 */ }
     document.body.classList.add('resizing');
-    webdeck.setSidebarResizing(true).catch(() => {}); // 拖动期间应用视图忽略鼠标，事件穿透到渲染层
     e.preventDefault();
   });
   resizer.addEventListener('pointermove', (e) => {
@@ -419,7 +418,6 @@ function initSidebarResizer() {
     if (!dragging) return;
     dragging = false;
     document.body.classList.remove('resizing');
-    webdeck.setSidebarResizing(false).catch(() => {}); // 恢复应用视图鼠标事件（含 cancel 路径）
     if (resizer.hasPointerCapture(e.pointerId)) resizer.releasePointerCapture(e.pointerId);
     if (e.type === 'pointercancel') return; // 取消（指针丢失等）：保持当前宽度，不落盘
     if (!moved) return; // 纯点击（无移动）：只清除拖拽态，不改变宽度

@@ -8,9 +8,11 @@
 
 ## What Changes
 
-- `ui:sidebar-resizing` 处理器：拖动期间把激活应用视图 `setVisible(false)`（隐藏后无命中区，鼠标事件穿透到壳 UI，拖动连续），拖动结束 `setVisible(true)` 恢复显示
-- 移除对不存在 API 的调用（消除 TypeError）
-- 不改变：拖动语义（宽度实时跟随/钳制/收起判定）、视图内容（隐藏仅瞬态，webContents 不销毁，恢复后状态保留）、其他 IPC 路径
+- 删除穿透机制链路（实测 v0.1.15 无穿透机制时真实拖动正常，方案 A 隐藏视图导致内容区消失不可接受）：
+  - `src/main/index.js`：删除 `ui:sidebar-resizing` IPC handler
+  - `src/preload/preload.cjs`：删除 `setSidebarResizing` 桥
+  - `src/renderer/app.js`：删除 pointerdown / endDrag 中的两处 `webdeck.setSidebarResizing(...)` 调用
+- 拖动行为回到 v0.1.15 实证状态：分隔条拖动期间应用内容区持续可见、拖动连续、宽度实时跟随/钳制/收起判定不变
 
 ## Capabilities
 
@@ -24,7 +26,7 @@
 
 ## Impact
 
-- **代码**：`src/main/index.js` 的 `ui:sidebar-resizing` handler（一处，约 2 行）
-- **行为**：拖动期间应用内容瞬态隐藏（与拖动开始时壳 UI 覆盖侧边栏区域的现状相比，代价是拖动过程内容不可见）；拖动结束恢复，页面状态（表单、滚动）保留
-- **风险**：低——恢复路径与 `pointercancel` 一致（渲染层 endDrag 的 cancel 分支同样调用 `setSidebarResizing(false)`）；modal 打开路径不受影响（拖动与弹窗互斥）
-- **验证**：`npm test`、`npm run smoke`（隔离 userData）、`npm run e2e`
+- **代码**：`src/main/index.js`（删 handler）、`src/preload/preload.cjs`（删桥）、`src/renderer/app.js`（删两处调用），共约 10 行
+- **行为**：拖动分隔条期间应用内容区持续可见（修复 v0.1.16 方案 A 的内容消失问题）；拖动连续性与 v0.1.15 一致
+- **风险**：低——删除的是 v0.1.16 新增的穿透链路，回退即恢复；拖动语义（宽度跟随/钳制/收起）不受影响
+- **验证**：`npm test`、`npm run smoke`（隔离 userData）、`npm run e2e` + 用户真机拖动确认

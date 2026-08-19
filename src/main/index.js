@@ -629,15 +629,6 @@ function registerIpc() {
     layoutFindView();
     return { ok: true };
   });
-  // 分隔条拖动期间让应用视图忽略鼠标事件：真实鼠标超出分隔条区域后，事件会被
-  // 原生视图截走（指针 capture 不跨 webContents），导致拖动中断。
-  // WebContentsView 无 setIgnoreMouseEvents（Electron 37，仅 BaseWindow/BrowserView 有）：
-  // 拖动期间隐藏应用视图使其无命中区、事件穿透到壳 UI，结束恢复（fix-drag-mouse-passthrough）。
-  ipcMain.handle('ui:sidebar-resizing', (_e, active) => {
-    const view = views.get(activeId);
-    if (view && !view.webContents.isDestroyed()) view.setVisible(active !== true);
-    return { ok: true };
-  });
 }
 
 // ---------------------------------------------------------------- 冒烟测试（全链路 E2E）

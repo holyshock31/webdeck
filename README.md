@@ -119,7 +119,7 @@ git tag v0.2.0 && git push origin v0.2.0
 ### 自动更新
 
 - **Windows 安装版**：内置自动更新（electron-updater）——启动后自动检查（约每 6 小时，失败自动退避重试），发现新版本自动下载并提示，**用户点击"立即安装"才执行**（退出应用不自动安装）；也可通过菜单「帮助 → 检查更新…」手动检查
-- **macOS（含未签名 `-unsigned` 产物）**：同样内置自动更新——检测到新版本自动下载，点击"立即安装"完成安装并自动重启。unsigned 产物的更新包在发布流水线中经**完整 ad-hoc 签名**（`codesign --verify` 可校验、Squirrel.Mac 可接受）；若安装阶段失败（签名校验异常等），界面会明确提示失败原因并提供**「打开下载页」**兜底（跳转 GitHub Releases 手动下载），不再静默无反馈
+- **macOS**：同样内置自动更新——检测到新版本自动下载，点击"立即安装"完成安装并自动重启。自动更新能否安装取决于该版本产物的签名方式（见下方「签名决策」）：**证书签名产物**（Developer ID 或自签名证书）可正常自动安装；**ad-hoc 兜底产物**无法自动跨版本安装（Squirrel.Mac 用旧版二进制哈希校验新包，机制上必然失败），需手动下载安装。若安装阶段失败，界面会明确提示失败原因并提供**「打开下载页」**兜底（跳转 GitHub Releases 手动下载），不再静默无反馈
 - **portable 版**：不做自动检查，更新方式为手动下载新版本
 - **自定义安装目录支持（Windows）**：安装包允许更改安装目录（`allowToChangeInstallationDirectory`），更新时会安装到**当前 exe 所在目录**（自动对齐，不会装回默认目录造成双实例）
 - **关机/退出保护**：系统关机或应用退出时停止发起新下载并取消进行中的下载，不残留半成品文件导致下次启动更新损坏
@@ -132,9 +132,42 @@ git tag v0.2.0 && git push origin v0.2.0
 - **开发态调试更新链路**：仓库根 `dev-app-update.yml`（默认 `http://127.0.0.1:8123`）——构建产物 + `latest*.yml` 放入本地静态服务器目录并指向它，开发态启动应用后菜单「检查更新…」即走完整链路（检查 → 下载 → 取消 → 就绪提示）
 - 更新元数据（`latest*.yml`）随每次发布自动上传到 GitHub Releases
 
-### 签名决策（当前：macOS 未签名 / Windows 未签名）
+### 签名决策（macOS 三分支 / Windows 未签名）
 
-- **macOS**：Developer ID 签名 + 公证需要 Apple Developer 账号（$99/年）与 App 专用密码。未配置时构建出的产物带 `-unsigned` 标记（表示未用 Developer ID 签名，构建流水线已对 .app 做**完整 ad-hoc 签名**，自动更新可正常安装；仅首次手动安装 dmg 会被 Gatekeeper 拦截，绕过方法见下方常见问题）。配置方式：仓库 secrets 设 `CSC_LINK` / `CSC_KEY_PASSWORD`（证书）与 `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`（公证），CI 检测到后自动签名 + 公证
+- **macOS**：发布流水线按仓库 secrets 的齐全度自动选择三种互斥模式：
+  1. **Developer ID 签名 + 公证**（secrets 含 `CSC_LINK` / `CSC_KEY_PASSWORD` 且 `APPLE_TEAM_ID` 等公证凭据齐全）：任何 Mac 双击 dmg 直接安装，无 Gatekeeper 拦截，自动更新可用。需 Apple Developer 账号（$99/年）
+  2. **证书签名、不公证**（只有 `CSC_LINK` / `CSC_KEY_PASSWORD`）：**自签名证书即可**（零成本）——自动更新可用（Squirrel.Mac 校验通过）；首次手动安装 dmg 会被 Gatekeeper 拦截（右键→打开，见下方常见问题）。**这是无付费证书环境下的推荐模式**
+  3. **ad-hoc 签名兜底**（无 `CSC_LINK`）：产物可用（首次安装需按下方指引放行），但**自动更新不可用**（跨版本校验机制上无法通过），每次升级需手动下载安装
+  - 产物命名：模式 1 无后缀；模式 2/3 带 `-unsigned` 后缀（语义="未用 Developer ID 签名"，**不影响可安装性与自动更新**——模式 2 的 `-unsigned` 产物可自动更新）
+  - **自签名证书生成与配置（模式 2，零成本）**：
+    ```bash
+    # 1. 生成自签名代码签名证书（有效期建议 10–20 年；私钥务必妥善保管，
+    #    泄露=任何人可冒名签名；证书失效/私钥丢失后更新将失败，需重新过渡安装）
+    cat > csc.cnf <<'EOF'
+    [req]
+    distinguished_name = dn
+    x509_extensions = v3
+    prompt = no
+    [dn]
+    CN = WebDeck Code Signing
+    O = WebDeck
+    [v3]
+    basicConstraints = critical,CA:FALSE
+    keyUsage = critical,digitalSignature
+    extendedKeyUsage = codeSigning
+    subjectKeyIdentifier = hash
+    EOF
+    openssl req -x509 -newkey rsa:2048 -keyout csc.key.pem -out csc.cert.pem \
+      -days 7300 -nodes -config csc.cnf
+    # 2. 导入钥匙串并导出 p12（记录 p12 密码）
+    security import csc.cert.pem -k ~/Library/Keychains/login.keychain-db
+    security export -k ~/Library/Keychains/login.keychain-db -t certs -f pkcs12 \
+      -P <p12密码> -o csc.p12
+    # 3. 配置 CI：仓库 secrets 设 CSC_LINK = `base64 -i csc.p12` 的输出（含私钥的
+    #    p12 的 base64，不带换行）、CSC_KEY_PASSWORD = p12 密码
+    ```
+    （私钥若未随证书导入钥匙串，可用 `openssl pkcs12 -export -inkey csc.key.pem -in csc.cert.pem -passout pass:<p12密码> -out csc.p12` 直接合成 p12。）
+  - **过渡安装**：已安装 ad-hoc 旧版（v0.1.16 及更早）的机器无法自动升级到首个证书签名版本（Squirrel.Mac 仍用旧版二进制哈希校验）——**首个证书签名版本需手动下载 dmg 安装一次**（右键→打开放行），此后自动更新恢复正常。发布说明会对此标注
 - **Windows**：当前决策「**先不签**」（零成本）——未签名 exe 首次运行会有 SmartScreen 提示，绕过方法见下方常见问题；后续分发规模上来可升级 **Azure Trusted Signing**（微软云签名，低成本、信誉建立快），升级路径：配置该服务后把签名步骤接入 release.yml
 - 两个决策都会随发布演进更新：产物一旦对外分发，建议优先补齐 macOS 签名公证（Gatekeeper 拦截体验最差）
 
@@ -157,7 +190,7 @@ git tag v0.2.0 && git push origin v0.2.0
   xattr -dr com.apple.quarantine /Applications/WebDeck.app
   ```
   注意：这是「先不签」决策的已知代价；配置签名 secrets 后产出的 dmg 无需此步骤
-- **下载的产物未签名标记 `-unsigned`**：表示该次构建未配置 Developer ID 签名 secrets（见「发布流程 → 签名决策」），产物已含完整 ad-hoc 签名——**应用内自动更新可正常安装**；仅手动安装 dmg 时按上面两条对应的指引放行
+- **下载的产物标记 `-unsigned`**：表示该次构建未用 Developer ID 证书签名（见「发布流程 → 签名决策」）。**证书签名**的 `-unsigned` 产物（自签名证书，模式 2）**应用内自动更新可正常安装**；**ad-hoc 兜底**的 `-unsigned` 产物（模式 3）自动更新不可用、需手动下载安装。手动安装 dmg 时均按上面两条对应的指引放行
 
 ## 路线图
 

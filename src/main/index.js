@@ -20,7 +20,8 @@ app.setAppUserModelId('com.webdeck.app');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ICON = path.join(__dirname, '../../assets/icon.png');
-const SIDEBAR_WIDTH = 252;
+const SIDEBAR_WIDTH = 252;   // 侧边栏默认宽度（settings.sidebarWidth 缺失/损坏时回退值）
+const SIDEBAR_MIN_WIDTH = 180; // 侧边栏宽度下限（拖动钳制）
 const EXPAND_BTN_W = 22;   // 浮动展开按钮覆盖视图尺寸（窗口左缘，收起态显示）
 const EXPAND_BTN_H = 52;
 const FIND_BAR_W = 400;    // 页内查找栏覆盖视图尺寸（内容区右上角，仅查找栏区域不透明）
@@ -42,6 +43,7 @@ const statuses = new Map();  // appId -> { status, detail, updatedAt }
 let activeId = null;
 let modalOpen = false;       // 弹窗打开时隐藏 WebContentsView（原生视图会遮挡 HTML 弹窗）
 let sidebarCollapsed = false; // 侧边栏收起态（持久化于 settings.sidebarCollapsed，缺失默认展开）
+let sidebarWidth = SIDEBAR_WIDTH; // 侧边栏当前宽度（拖动实时更新，持久化于 settings.sidebarWidth）
 let autoUpdateEnabled = true; // 更新偏好开关（持久化于 settings.autoUpdateEnabled，缺失默认开，帮助菜单控制）
 let expandView = null;        // 收起态下窗口左缘的浮动展开按钮（原生覆盖视图，盖在应用视图之上）
 let findView = null;          // 页内查找栏覆盖视图（原生覆盖视图，盖在应用视图之上）
@@ -154,7 +156,7 @@ function layoutActiveView() {
     // 收起态：应用视图占满整个窗口
     view.setBounds({ x: 0, y: 0, width: w, height: h });
   } else {
-    view.setBounds({ x: SIDEBAR_WIDTH, y: 0, width: Math.max(320, w - SIDEBAR_WIDTH), height: h });
+    view.setBounds({ x: sidebarWidth, y: 0, width: Math.max(320, w - sidebarWidth), height: h });
   }
   layoutExpandView();
   layoutFindView(); // 窗口尺寸变化时查找栏跟随（仅可见时更新位置）
@@ -202,13 +204,21 @@ function reloadExpandView(theme) {
 function layoutFindView() {
   if (!win || !findView) return;
   const [w] = win.getContentSize();
-  const left = sidebarCollapsed ? 0 : SIDEBAR_WIDTH;
+  const left = sidebarCollapsed ? 0 : sidebarWidth;
   findView.setBounds({
     x: Math.max(left, w - FIND_BAR_W - 12),
     y: 8,
     width: FIND_BAR_W,
     height: FIND_BAR_H,
   });
+}
+
+// 侧边栏宽度钳制：[180, max(180, 窗口宽度/2)]，与渲染层钳制规则一致（拖出边界即停）
+function clampSidebarWidth(w) {
+  const n = Math.round(Number(w));
+  if (!Number.isFinite(n)) return sidebarWidth;
+  const max = Math.max(SIDEBAR_MIN_WIDTH, Math.round((win?.getContentSize()[0] ?? SIDEBAR_WIDTH * 2) / 2));
+  return Math.min(Math.max(n, SIDEBAR_MIN_WIDTH), max);
 }
 
 // 把查找栏抬升到 contentView 最上层（应用视图 addChildView 会追加到顶层，需再抬升）
@@ -575,6 +585,28 @@ function registerIpc() {
     }
     return { ok: true, sidebarCollapsed };
   });
+  // 侧边栏宽度持久化：钳制后写入 settings.sidebarWidth（webdeck.json 原子写入），
+  // 并立即重排应用视图/查找栏，保证原生视图左缘与侧边栏 DOM 宽度一致
+  ipcMain.handle('settings:setSidebarWidth', async (_e, width) => {
+    const n = Number(width);
+    if (!Number.isFinite(n)) return { ok: false, error: `无效宽度: ${width}` };
+    sidebarWidth = clampSidebarWidth(n);
+    await store.updateSettings({ sidebarWidth });
+    layoutActiveView();
+    layoutFindView();
+    win.webContents.send('ui:sidebar-width', sidebarWidth); // 渲染层以主进程钳制结果为准
+    return { ok: true, sidebarWidth };
+  });
+  // 拖动过程中的实时宽度预览（不落盘）：渲染层拖动时同步原生视图位置，
+  // 避免应用视图盖住分隔条/侧边栏导致拖动中断；拖动结束走 settings:setSidebarWidth 落盘
+  ipcMain.handle('ui:sidebar-width-preview', (_e, width) => {
+    const n = Number(width);
+    if (!Number.isFinite(n)) return { ok: false };
+    sidebarWidth = clampSidebarWidth(n);
+    layoutActiveView();
+    layoutFindView();
+    return { ok: true };
+  });
 }
 
 // ---------------------------------------------------------------- 冒烟测试（全链路 E2E）
@@ -733,10 +765,99 @@ async function runSmokeTest() {
     await win.webContents.executeJavaScript(`webdeck.removeApp('${extApp.id}')`, true);
     extProc.kill('SIGTERM');
 
+    // 9. 侧边栏宽度可调（add-resizable-sidebar）：分隔条拖动 → CSS 变量实时跟随、
+    //    主进程重排原生视图、边界钳制、落盘、收起态隐藏、展开后宽度保持
+    const rsAppCfg = { name: 'Smoke Resize', url: 'http://127.0.0.1:9/', launch: { mode: 'none' }, monitor: { enabled: false } };
+    const rsApp = await win.webContents.executeJavaScript(`webdeck.addApp(${JSON.stringify(rsAppCfg)})`, true);
+    await win.webContents.executeJavaScript(`webdeck.activateApp('${rsApp.id}')`, true);
+    await sleep(500); // 等激活完成（layoutActiveView 已执行）
+
+    // 9.1 默认宽度 252px + 分隔条元素存在（先经持久化通道复位，保证多次运行确定性）
+    await win.webContents.executeJavaScript(`webdeck.setSidebarWidth(252)`, true);
+    await sleep(200);
+    const rsDefault = await win.webContents.executeJavaScript(
+      `document.querySelector('#sidebar-resizer') !== null && getComputedStyle(document.querySelector('#sidebar')).width === '252px'`,
+      true,
+    );
+    console.log(`SMOKE_RS_DEFAULT ok=${rsDefault} bounds.x=${views.get(rsApp.id)?.getBounds().x}`);
+
+    // 9.2 模拟拖动：pointerdown → move(320) → up(320)。拖动中 CSS 变量实时变化、
+    //    body.resizing 置位；结束后宽度保持且落盘（settings.sidebarWidth=320）
+    const rsDrag = await win.webContents.executeJavaScript(`(async () => {
+      const resizer = document.querySelector('#sidebar-resizer');
+      const sidebar = document.querySelector('#sidebar');
+      const fire = (type, x) => resizer.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: x, pointerId: 7 }));
+      fire('pointerdown', 252);
+      fire('pointermove', 320);
+      const during = getComputedStyle(sidebar).width;
+      const resizing = document.body.classList.contains('resizing');
+      fire('pointerup', 320);
+      const after = getComputedStyle(sidebar).width;
+      const noResizing = !document.body.classList.contains('resizing');
+      await new Promise((r) => setTimeout(r, 250)); // 等落盘写入完成（webdeck.json 原子写）
+      const stored = await webdeck.getSettings();
+      return { during, after, resizing, noResizing, stored: stored.sidebarWidth };
+    })()`, true);
+    await sleep(300); // 等预览/落盘 IPC 在主进程生效并重排视图
+    const rsViewX = views.get(rsApp.id)?.getBounds().x;
+    const rsDragOk = rsDrag.during === '320px' && rsDrag.after === '320px'
+      && rsDrag.resizing === true && rsDrag.noResizing === true
+      && rsDrag.stored === 320 && rsViewX === 320;
+    console.log(`SMOKE_RS_DRAG ok=${rsDragOk} during=${rsDrag.during} after=${rsDrag.after} resizing=${rsDrag.resizing} stored=${rsDrag.stored} viewX=${rsViewX}`);
+
+    // 9.3 边界钳制：拖过窗口一半 → 停在窗口一半；拖到 180px 以下 → 停在 180px
+    const rsClamp = await win.webContents.executeJavaScript(`(async () => {
+      const resizer = document.querySelector('#sidebar-resizer');
+      const sidebar = document.querySelector('#sidebar');
+      const fire = (type, x) => resizer.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: x, pointerId: 8 }));
+      fire('pointerdown', 320);
+      fire('pointermove', 99999);
+      const maxW = getComputedStyle(sidebar).width;
+      fire('pointerup', 99999);
+      await new Promise((r) => setTimeout(r, 250));
+      const storedMax = (await webdeck.getSettings()).sidebarWidth;
+      fire('pointerdown', 640);
+      fire('pointermove', 10);
+      const minW = getComputedStyle(sidebar).width;
+      fire('pointerup', 10);
+      await new Promise((r) => setTimeout(r, 250));
+      const storedMin = (await webdeck.getSettings()).sidebarWidth;
+      return { maxW, storedMax, minW, storedMin, half: Math.round(window.innerWidth / 2) };
+    })()`, true);
+    await sleep(300);
+    const rsClampOk = rsClamp.maxW === `${rsClamp.half}px` && Math.abs(rsClamp.storedMax - rsClamp.half) <= 1
+      && rsClamp.minW === '180px' && rsClamp.storedMin === 180;
+    console.log(`SMOKE_RS_CLAMP ok=${rsClampOk} max=${rsClamp.maxW} storedMax=${rsClamp.storedMax} min=${rsClamp.minW} storedMin=${rsClamp.storedMin}`);
+
+    // 9.4 收起态分隔条隐藏；展开后恢复显示且宽度沿用持久化值（180px → 先拖回 320）
+    const rsCollapse = await win.webContents.executeJavaScript(`(async () => {
+      const resizer = document.querySelector('#sidebar-resizer');
+      const sidebar = document.querySelector('#sidebar');
+      const fire = (type, x) => resizer.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: x, pointerId: 9 }));
+      fire('pointerdown', 180);
+      fire('pointermove', 320);
+      fire('pointerup', 320);
+      await webdeck.setSidebarCollapsed(true);
+      const collapsedDisplay = getComputedStyle(resizer).display;
+      const collapsedSidebar = getComputedStyle(sidebar).display;
+      await webdeck.setSidebarCollapsed(false);
+      const expandedDisplay = getComputedStyle(resizer).display;
+      const expandedWidth = getComputedStyle(sidebar).width;
+      return { collapsedDisplay, collapsedSidebar, expandedDisplay, expandedWidth };
+    })()`, true);
+    await sleep(300);
+    const rsViewX2 = views.get(rsApp.id)?.getBounds().x;
+    const rsCollapseOk = rsCollapse.collapsedDisplay === 'none' && rsCollapse.collapsedSidebar === 'none'
+      && rsCollapse.expandedDisplay !== 'none' && rsCollapse.expandedWidth === '320px' && rsViewX2 === 320;
+    console.log(`SMOKE_RS_COLLAPSE ok=${rsCollapseOk} collapsed=${rsCollapse.collapsedDisplay} expanded=${rsCollapse.expandedDisplay} width=${rsCollapse.expandedWidth} viewX=${rsViewX2}`);
+
+    await win.webContents.executeJavaScript(`webdeck.removeApp('${rsApp.id}')`, true);
+
     const ok = finalStatus === 'running' && stoppedStatus === 'stopped'
       && manualRunning === 'running' && manualStopped === 'stopped'
       && activeAfterStart !== manualApp.id && ctlOk && ctlNoneDisabled
-      && extStart?.skipped === true && extSpawned === false && extStatus === 'running';
+      && extStart?.skipped === true && extSpawned === false && extStatus === 'running'
+      && rsDefault && rsDragOk && rsClampOk && rsCollapseOk;
     console.log(ok ? 'SMOKE_OK' : 'SMOKE_FAIL');
     app.exit(ok ? 0 : 1);
   } catch (err) {
@@ -848,6 +969,8 @@ app.whenReady().then(async () => {
   registerIpc(); // 先注册 IPC，渲染进程加载后会立即调用
   dbg('ready: ipc registered');
   sidebarCollapsed = (await store.load()).settings.sidebarCollapsed === true; // 缺失默认展开
+  const storedWidth = Number((await store.load()).settings.sidebarWidth);
+  sidebarWidth = Number.isFinite(storedWidth) ? Math.max(SIDEBAR_MIN_WIDTH, Math.round(storedWidth)) : SIDEBAR_WIDTH; // 缺失/损坏回退默认
   autoUpdateEnabled = (await store.load()).settings.autoUpdateEnabled !== false; // 缺失默认开启
   await createWindow();
   layoutExpandView(); // 若上次为收起态，启动即显示浮动展开按钮

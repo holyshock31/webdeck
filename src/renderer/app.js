@@ -3,12 +3,16 @@
 
 const AVATAR_COLORS = ['#4f8cff', '#7f5af0', '#3ecf8e', '#f5b84c', '#f0656e', '#2ec4b6', '#e07be0', '#ff9f43'];
 
+const SIDEBAR_MIN_WIDTH = 180;   // 侧边栏宽度下限
+const SIDEBAR_DEFAULT_WIDTH = 252; // 默认宽度（settings.sidebarWidth 缺失/损坏时回退）
+
 let apps = [];
 let statuses = new Map(); // id -> { status, detail }
 let activeId = null;
 let theme = 'dark';       // 'dark' | 'light'（持久化于 settings.theme）
 let logTimer = null;
 let sidebarCollapsed = false; // 侧边栏收起态（持久化于 settings.sidebarCollapsed，缺失默认展开）
+let sidebarWidth = SIDEBAR_DEFAULT_WIDTH; // 侧边栏当前宽度（--sidebar-width，持久化于 settings.sidebarWidth）
 let lastSidebarToggle = 0;    // 防抖：菜单加速键与 keydown 双通道可能同时触发，避免重复切换
 
 const $ = (sel) => document.querySelector(sel);
@@ -364,6 +368,56 @@ async function toggleSidebar() {
   }
 }
 
+// ---------------------------------------------------------------- 侧边栏宽度调整
+
+// 宽度钳制：[180, max(180, 窗口宽度/2)]，拖动中与落盘前都钳制，保证主内容区始终可用
+function clampSidebarWidth(w) {
+  const n = Math.round(Number(w));
+  if (!Number.isFinite(n)) return sidebarWidth; // 非数值输入保持当前宽度
+  const max = Math.max(SIDEBAR_MIN_WIDTH, Math.round(window.innerWidth / 2));
+  return Math.min(Math.max(n, SIDEBAR_MIN_WIDTH), max);
+}
+
+// 应用宽度：写入 --sidebar-width 变量（styles.css 中 #sidebar 宽度由此驱动）并记录状态
+function applySidebarWidth(w) {
+  const clamped = clampSidebarWidth(w);
+  sidebarWidth = clamped;
+  document.documentElement.style.setProperty('--sidebar-width', `${clamped}px`);
+  return clamped;
+}
+
+// 分隔条拖动：pointerdown 捕获指针并进入 resizing 态（全局 col-resize + 禁止文本选中）；
+// pointermove 实时计算宽度（钳制）写入 CSS 变量，并经预览通道同步主进程重排原生应用视图；
+// pointerup 落盘（settings.sidebarWidth 原子写入），收起态下分隔条隐藏、不响应。
+function initSidebarResizer() {
+  const resizer = $('#sidebar-resizer');
+  if (!resizer) return;
+  let dragging = false;
+  resizer.addEventListener('pointerdown', (e) => {
+    if (document.body.classList.contains('sidebar-collapsed')) return;
+    dragging = true;
+    try { resizer.setPointerCapture(e.pointerId); } catch { /* 指针已失效等边缘情况：不阻断拖动 */ }
+    document.body.classList.add('resizing');
+    e.preventDefault();
+  });
+  resizer.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const w = applySidebarWidth(e.clientX);
+    webdeck.setSidebarWidthPreview(w).catch(() => {}); // 实时同步原生视图，不落盘
+  });
+  const endDrag = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove('resizing');
+    if (resizer.hasPointerCapture(e.pointerId)) resizer.releasePointerCapture(e.pointerId);
+    if (e.type === 'pointercancel') return; // 取消（指针丢失等）：保持当前宽度，不落盘
+    const w = applySidebarWidth(e.clientX);
+    webdeck.setSidebarWidth(w).catch(() => {}); // 拖动结束落盘，重启后保持
+  };
+  resizer.addEventListener('pointerup', endDrag);
+  resizer.addEventListener('pointercancel', endDrag);
+}
+
 // ---------------------------------------------------------------- 日志
 
 async function openLogs() {
@@ -555,6 +609,7 @@ function initUpdater() {
 function bind() {
   $('#btn-add').addEventListener('click', openAddModal);
   $('#btn-collapse').addEventListener('click', toggleSidebar);
+  initSidebarResizer();
   $('#tb-toggle').addEventListener('click', () => { if (activeId) toggleAppProc(activeId); });
   $('#tb-reload').addEventListener('click', () => activeId && webdeck.reloadApp(activeId));
   $('#tb-external').addEventListener('click', () => {
@@ -617,6 +672,7 @@ function bind() {
   webdeck.onAppsChanged(() => refreshApps());
   webdeck.onAddAppRequest(openAddModal);
   webdeck.onSidebarCollapsed(applySidebarCollapsed);
+  webdeck.onSidebarWidth((w) => applySidebarWidth(w)); // 主进程钳制/落盘后以主进程结果为准
   webdeck.onToggleSidebarRequest(() => toggleSidebar());
   webdeck.onActivated(({ id, status }) => {
     // 主进程激活（启动自动激活 / 菜单切换）后同步渲染层，避免工具栏/高亮停留在未选中态
@@ -652,4 +708,7 @@ function bind() {
   const settings = await webdeck.getSettings().catch(() => ({}));
   applyTheme(settings?.theme);
   applySidebarCollapsed(settings?.sidebarCollapsed === true);
+  // 启动时以持久化宽度恢复（缺失/非数值回退默认 252px），并同步主进程布局
+  const w = applySidebarWidth(Number(settings?.sidebarWidth) || SIDEBAR_DEFAULT_WIDTH);
+  webdeck.setSidebarWidthPreview(w).catch(() => {});
 })();

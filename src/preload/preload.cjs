@@ -19,10 +19,13 @@ contextBridge.exposeInMainWorld('webdeck', {
   getLogs: (id) => ipcRenderer.invoke('app:logs', id),
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
 
-  // 全局设置（主题、侧边栏收起等）
+  // 全局设置（主题、侧边栏收起/宽度等）
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setTheme: (theme) => ipcRenderer.invoke('settings:setTheme', theme),
   setSidebarCollapsed: (collapsed) => ipcRenderer.invoke('settings:setSidebarCollapsed', collapsed),
+  // 侧边栏宽度：拖动结束落盘（settings:setSidebarWidth）；拖动中实时预览（ui:sidebar-width-preview，不落盘）
+  setSidebarWidth: (width) => ipcRenderer.invoke('settings:setSidebarWidth', width),
+  setSidebarWidthPreview: (width) => ipcRenderer.invoke('ui:sidebar-width-preview', width),
 
   // 弹窗状态（打开时隐藏 WebContentsView，避免遮挡模态框）
   setModalOpen: (open) => ipcRenderer.invoke('ui:modal', open),
@@ -58,6 +61,11 @@ contextBridge.exposeInMainWorld('webdeck', {
     const handler = (_e, collapsed) => cb(collapsed);
     ipcRenderer.on('ui:sidebar-collapsed', handler);
     return () => ipcRenderer.removeListener('ui:sidebar-collapsed', handler);
+  },
+  onSidebarWidth: (cb) => {
+    const handler = (_e, width) => cb(width);
+    ipcRenderer.on('ui:sidebar-width', handler);
+    return () => ipcRenderer.removeListener('ui:sidebar-width', handler);
   },
   onToggleSidebarRequest: (cb) => {
     const handler = () => cb();

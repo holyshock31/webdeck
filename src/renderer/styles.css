@@ -60,12 +60,25 @@ body {
 
 /* ---------------- 侧边栏 ---------------- */
 #sidebar {
-  width: 252px;
+  width: var(--sidebar-width, 252px);
   flex: none;
   display: flex;
   flex-direction: column;
   background: var(--bg-side);
   border-right: 1px solid var(--border);
+}
+
+/* 分隔条：侧边栏右边界拖动调整宽度（收起态隐藏，见下方 collapsed 规则） */
+#sidebar-resizer {
+  width: 6px;
+  flex: none;
+  cursor: col-resize;
+  background: transparent;
+  transition: background-color 0.15s;
+}
+#sidebar-resizer:hover, body.resizing #sidebar-resizer {
+  background: var(--accent);
+  opacity: 0.45;
 }
 
 #sidebar-header {
@@ -75,8 +88,12 @@ body {
   padding: 12px 12px 10px;
 }
 
-/* 收起态：隐藏整个侧边栏，主内容区（flex: 1）自动占满窗口 */
-body.sidebar-collapsed #sidebar { display: none; }
+/* 收起态：隐藏整个侧边栏与分隔条，主内容区（flex: 1）自动占满窗口 */
+body.sidebar-collapsed #sidebar,
+body.sidebar-collapsed #sidebar-resizer { display: none; }
+
+/* 拖动分隔条过程中：全局 col-resize 光标 + 禁止文本选中（松开后恢复） */
+body.resizing { cursor: col-resize; user-select: none; }
 
 .header-actions { display: flex; align-items: center; gap: 4px; }
 

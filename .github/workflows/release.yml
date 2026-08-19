@@ -61,16 +61,25 @@ jobs:
         #   2) 对 .app 做完整 ad-hoc 签名（密封资源）——否则 codesign --verify 报
         #      "code has no resources but signature indicates they must be present"，
         #      Squirrel.Mac 安装前签名校验失败、自动更新静默中止（v0.1.14 事故）；
-        #   3) --prepackaged 从已签名 .app 出 dmg/zip/latest-mac.yml（元数据与实际
+        #   3) 注入 app-update.yml（更新配置）：--mac dir 阶段不生成该文件（targets 不含
+        #      dmg/zip），缺失则打包态客户端更新检查 ENOENT（v0.1.15 事故）；注入必须在
+        #      codesign 之前——新文件进入密封资源，签名校验（含 Squirrel.Mac）完整认可；
+        #   4) --prepackaged 从已签名 .app 出 dmg/zip/latest-mac.yml（元数据与实际
         #      资产天然一致，artifactName 保持 -unsigned 后缀约定不变）；
-        #   4) 出包前 codesign 断言：校验失败即 job 失败，坏签名包进不了 release。
+        #   5) 出包前 codesign 断言 + 出包后 zip 内容断言：任一步失败即 job 失败，
+        #      坏包/缺更新配置的包进不了 release。
         run: |
           npx electron-builder --mac dir --publish never
           APP_PATH="$(find dist -maxdepth 2 -name '*.app' -type d | head -1)"
+          printf 'owner: holyshock31\nrepo: webdeck\nprovider: github\nupdaterCacheDirName: webdeck-updater\n' \
+            > "$APP_PATH/Contents/Resources/app-update.yml"
           codesign --force --deep --sign - "$APP_PATH"
           codesign --verify --deep --strict "$APP_PATH"
           npx electron-builder --mac --prepackaged "$APP_PATH" --publish never \
             --config.mac.artifactName=WebDeck-\${version}-\${arch}-mac\${env.UNSIGNED_SUFFIX}.\${ext}
+          # 出包断言：产物 zip 必须携带 app-update.yml（缺失即 job 失败，release 保持 draft）
+          unzip -l dist/WebDeck-*-mac-*.zip | grep -q 'Contents/Resources/app-update.yml' \
+            || { echo "FAIL: 产物 zip 缺少 Contents/Resources/app-update.yml"; exit 1; }
         env:
           UNSIGNED_SUFFIX: '-unsigned'
 

@@ -1,4 +1,4 @@
-/* WebDeck — 暗色侧边栏 UI（默认主题） */
+/* WebDeck — 侧边栏 UI（默认亮色主题，切换入口在侧边栏工具栏 🌙/☀️） */
 :root {
   --bg: #14161c;
   --bg-side: #1b1e26;
@@ -65,19 +65,58 @@ body {
   display: flex;
   flex-direction: column;
   background: var(--bg-side);
-  border-right: 1px solid var(--border);
+  /* 边界线由 #sidebar-resizer::before 承担（位于侧边栏右缘），此处不再画 border，
+     避免与分隔条把手线重叠成双线 */
 }
 
-/* 分隔条：侧边栏右边界拖动调整宽度（收起态隐藏，见下方 collapsed 规则） */
+/* 分隔条：侧边栏右边界拖动调整宽度（收起态隐藏，见下方 collapsed 规则）。
+   命中区通过负 margin 叠进侧边栏右缘、完全透明——任何主题下都不产生可见色带
+   （侧边栏内容已加右内边距让位，命中区不遮挡任何可点击元素）。
+   两个可独立调节的宽度（都在本规则内定义，改数值即生效）：
+   --resizer-hit-w 可操作区域：命中/光标（col-resize）范围（叠进侧边栏右缘，无视觉占用）
+   --resizer-hl-w  高亮区域：悬停/拖拽时亮起的宽度（≤ 可操作区域） */
 #sidebar-resizer {
-  width: 6px;
+  --resizer-hit-w: 14px;
+  --resizer-hl-w: 6px;
+  width: var(--resizer-hit-w);
+  margin-left: calc(-1 * var(--resizer-hit-w)); /* 叠进侧边栏右缘：不占布局空间、无色带 */
   flex: none;
   cursor: col-resize;
+  position: relative;
+  overflow: hidden;
   background: transparent;
-  transition: background-color 0.15s;
 }
-#sidebar-resizer:hover, body.resizing #sidebar-resizer {
+/* 边界把手线：侧边栏右缘 1px 浅色竖线，悬停/拖拽中加亮加粗 */
+#sidebar-resizer::before {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+  transition: width 0.15s, background-color 0.15s;
+}
+#sidebar-resizer:hover::before,
+body.resizing #sidebar-resizer::before {
+  width: 2px;
   background: var(--accent);
+}
+/* 悬停/拖拽高亮 wash：宽度由 --resizer-hl-w 控制，贴边界线向左展开（仅高亮，不参与命中） */
+#sidebar-resizer::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--resizer-hl-w);
+  background: var(--accent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+#sidebar-resizer:hover::after,
+body.resizing #sidebar-resizer::after {
   opacity: 0.45;
 }
 
@@ -85,7 +124,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 12px 10px;
+  padding: 12px 14px 10px; /* 右 14px 与命中区对齐，避免可点击内容被命中区覆盖 */
 }
 
 /* 收起态：隐藏整个侧边栏与分隔条，主内容区（flex: 1）自动占满窗口 */
@@ -107,7 +146,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 #toolbar {
   display: flex;
   gap: 4px;
-  padding: 0 12px 10px;
+  padding: 0 14px 10px; /* 右 14px 与命中区对齐 */
   border-bottom: 1px solid var(--border);
 }
 
@@ -122,7 +161,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .icon-btn:disabled { opacity: 0.35; cursor: default; }
 
 /* ---------------- 应用列表 ---------------- */
-#app-list { flex: 1; overflow-y: auto; padding: 8px 6px; }
+#app-list { flex: 1; overflow-y: auto; padding: 8px 14px 8px 6px; } /* 右 14px 与命中区对齐 */
 
 .app-item {
   display: flex;
@@ -194,7 +233,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 
 /* ---------------- 底部状态 ---------------- */
 #sidebar-footer {
-  padding: 10px 12px;
+  padding: 10px 14px; /* 右 14px 与命中区对齐 */
   border-top: 1px solid var(--border);
   font-size: 11px;
   color: var(--text-dim);

@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('webdeck', {
   // 侧边栏宽度：拖动结束落盘（settings:setSidebarWidth）；拖动中实时预览（ui:sidebar-width-preview，不落盘）
   setSidebarWidth: (width) => ipcRenderer.invoke('settings:setSidebarWidth', width),
   setSidebarWidthPreview: (width) => ipcRenderer.invoke('ui:sidebar-width-preview', width),
+  // 分隔条拖动期间让应用视图忽略鼠标事件（ui:sidebar-resizing），避免拖动被原生视图截断
+  setSidebarResizing: (active) => ipcRenderer.invoke('ui:sidebar-resizing', active),
 
   // 弹窗状态（打开时隐藏 WebContentsView，避免遮挡模态框）
   setModalOpen: (open) => ipcRenderer.invoke('ui:modal', open),

@@ -106,6 +106,10 @@ function createView(appCfg) {
     },
   });
   view.setBackgroundColor('#ffffff');
+  // 视图加载状态（fix-activate-no-reload）：已加载的应用 URL 与上次加载失败/崩溃标志，
+  // 供 activateApp 决定是否重新加载（仅首次创建 / URL 变更 / 失败自愈时加载）
+  view.__loadedUrl = null;
+  view.__loadFailed = false;
 
   const ses = session.fromPartition(partition);
   if (!ses.__webdeckSetup) {
@@ -124,11 +128,17 @@ function createView(appCfg) {
 
   view.webContents.on('did-fail-load', (_e, code, desc, url) => {
     if (code === -3 /* ABORTED */) return;
+    view.__loadFailed = true; // 激活时自愈重试（fix-activate-no-reload）
     setStatus(appCfg.id, 'error', `页面加载失败 (${code}) ${desc}: ${url}`);
   });
   view.webContents.on('render-process-gone', (_e, details) => {
+    view.__loadFailed = true; // 渲染进程异常退出：下次激活自动重载恢复
     setStatus(appCfg.id, 'error', `渲染进程异常退出: ${details.reason}`);
   });
+  // 真实页面导航提交（did-navigate）才视为加载成功并清除失败标志。
+  // 注意：加载失败后 Chromium 会导航到错误页并触发 did-finish-load（不触发
+  // did-navigate）——若用 finish 清标志，自愈重试会被错误页误清除（fix-activate-no-reload）。
+  view.webContents.on('did-navigate', () => { view.__loadFailed = false; });
   // 页内查找：命中计数回报转发给查找栏（仅激活视图的会话）
   view.webContents.on('found-in-page', (_e, result) => {
     if (activeId !== appCfg.id || !findSession.isOpen()) return;
@@ -156,6 +166,7 @@ function layoutActiveView() {
     // 收起态：应用视图占满整个窗口
     view.setBounds({ x: 0, y: 0, width: w, height: h });
   } else {
+    // 展开态：应用视图从侧边栏右缘开始（命中区叠在侧边栏右缘内，不占外部空间）
     view.setBounds({ x: sidebarWidth, y: 0, width: Math.max(320, w - sidebarWidth), height: h });
   }
   layoutExpandView();
@@ -213,12 +224,14 @@ function layoutFindView() {
   });
 }
 
-// 侧边栏宽度钳制：[180, max(180, 窗口宽度/2)]，与渲染层钳制规则一致（拖出边界即停）
-function clampSidebarWidth(w) {
+// 侧边栏宽度钳制：常规下限 180px、上限窗口宽度一半；allowCollapseZone 时下限放开到 0
+//（拖拽进入收起阈值区临时跟随；持久化路径保持 180 下限，存储永不出现窄宽度）
+function clampSidebarWidth(w, { allowCollapseZone = false } = {}) {
   const n = Math.round(Number(w));
   if (!Number.isFinite(n)) return sidebarWidth;
   const max = Math.max(SIDEBAR_MIN_WIDTH, Math.round((win?.getContentSize()[0] ?? SIDEBAR_WIDTH * 2) / 2));
-  return Math.min(Math.max(n, SIDEBAR_MIN_WIDTH), max);
+  const min = allowCollapseZone ? 0 : SIDEBAR_MIN_WIDTH;
+  return Math.min(Math.max(n, min), max);
 }
 
 // 把查找栏抬升到 contentView 最上层（应用视图 addChildView 会追加到顶层，需再抬升）
@@ -317,6 +330,7 @@ async function activateApp(id) {
   if (!appCfg) return { ok: false, error: `应用不存在: ${id}` };
 
   let view = views.get(id);
+  const isNew = !view;
   if (!view) {
     view = createView(appCfg);
     views.set(id, view);
@@ -331,7 +345,13 @@ async function activateApp(id) {
     layoutActiveView();
   }
   view.setVisible(!modalOpen); // 弹窗打开期间保持隐藏，避免遮挡模态框
-  view.webContents.loadURL(appCfg.url).catch(() => { /* did-fail-load 已上报 */ });
+  // 仅三类情形加载/重载页面（fix-activate-no-reload）：首次创建视图、配置 URL 变更
+  // （编辑生效）、上次加载失败/渲染进程崩溃（自愈重试）——切换标签与重复点击不再刷新页面
+  const needLoad = isNew || view.__loadedUrl !== appCfg.url || view.__loadFailed;
+  if (needLoad) {
+    view.webContents.loadURL(appCfg.url).catch(() => { /* did-fail-load 已上报 */ });
+    view.__loadedUrl = appCfg.url;
+  }
   view.webContents.focus();
 
   // 打开时按配置自动拉起本地服务
@@ -598,13 +618,24 @@ function registerIpc() {
     return { ok: true, sidebarWidth };
   });
   // 拖动过程中的实时宽度预览（不落盘）：渲染层拖动时同步原生视图位置，
-  // 避免应用视图盖住分隔条/侧边栏导致拖动中断；拖动结束走 settings:setSidebarWidth 落盘
+  // 避免应用视图盖住分隔条/侧边栏导致拖动中断；拖动结束走 settings:setSidebarWidth 落盘。
+  // 预览放宽下限（allowCollapseZone）：拖入收起阈值区时视图跟随 DOM 到窄宽度（瞬态）；
+  // 持久化路径（settings:setSidebarWidth）仍保持 180 下限。
   ipcMain.handle('ui:sidebar-width-preview', (_e, width) => {
     const n = Number(width);
     if (!Number.isFinite(n)) return { ok: false };
-    sidebarWidth = clampSidebarWidth(n);
+    sidebarWidth = clampSidebarWidth(n, { allowCollapseZone: true });
     layoutActiveView();
     layoutFindView();
+    return { ok: true };
+  });
+  // 分隔条拖动期间让应用视图忽略鼠标事件：真实鼠标超出分隔条区域后，事件会被
+  // 原生视图截走（指针 capture 不跨 webContents），导致拖动中断。
+  // WebContentsView 无 setIgnoreMouseEvents（Electron 37，仅 BaseWindow/BrowserView 有）：
+  // 拖动期间隐藏应用视图使其无命中区、事件穿透到壳 UI，结束恢复（fix-drag-mouse-passthrough）。
+  ipcMain.handle('ui:sidebar-resizing', (_e, active) => {
+    const view = views.get(activeId);
+    if (view && !view.webContents.isDestroyed()) view.setVisible(active !== true);
     return { ok: true };
   });
 }
@@ -817,10 +848,10 @@ async function runSmokeTest() {
       await new Promise((r) => setTimeout(r, 250));
       const storedMax = (await webdeck.getSettings()).sidebarWidth;
       fire('pointerdown', 640);
-      fire('pointermove', 10);
-      const minW = getComputedStyle(sidebar).width;
-      fire('pointerup', 10);
+      fire('pointermove', 120); // 阈值区外（[80,180)）：松手回弹 180，不触发收起
+      fire('pointerup', 120);
       await new Promise((r) => setTimeout(r, 250));
+      const minW = getComputedStyle(sidebar).width;
       const storedMin = (await webdeck.getSettings()).sidebarWidth;
       return { maxW, storedMax, minW, storedMin, half: Math.round(window.innerWidth / 2) };
     })()`, true);
@@ -850,6 +881,32 @@ async function runSmokeTest() {
     const rsCollapseOk = rsCollapse.collapsedDisplay === 'none' && rsCollapse.collapsedSidebar === 'none'
       && rsCollapse.expandedDisplay !== 'none' && rsCollapse.expandedWidth === '320px' && rsViewX2 === 320;
     console.log(`SMOKE_RS_COLLAPSE ok=${rsCollapseOk} collapsed=${rsCollapse.collapsedDisplay} expanded=${rsCollapse.expandedDisplay} width=${rsCollapse.expandedWidth} viewX=${rsViewX2}`);
+
+    // 9.5 拖拽收起（collapse-sidebar-by-drag）：拖入阈值区（<80px）松手 → 收起态；
+    //    窄宽度不落盘（保留拖前合法宽度 320），展开恢复
+    const rsCollapseDrag = await win.webContents.executeJavaScript(`(async () => {
+      const resizer = document.querySelector('#sidebar-resizer');
+      const sidebar = document.querySelector('#sidebar');
+      const fire = (type, x) => resizer.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: x, pointerId: 10 }));
+      fire('pointerdown', 320);
+      fire('pointermove', 30);
+      fire('pointerup', 30);
+      await new Promise((r) => setTimeout(r, 300));
+      const collapsed = (await webdeck.getSettings()).sidebarCollapsed === true;
+      const storedW = (await webdeck.getSettings()).sidebarWidth;
+      const bodyCollapsed = document.body.classList.contains('sidebar-collapsed');
+      const widthAfter = getComputedStyle(sidebar).width;
+      await webdeck.setSidebarCollapsed(false);
+      await new Promise((r) => setTimeout(r, 300));
+      const expandedW = getComputedStyle(sidebar).width;
+      return { collapsed, storedW, bodyCollapsed, widthAfter, expandedW };
+    })()`, true);
+    await sleep(300);
+    const rsViewX3 = views.get(rsApp.id)?.getBounds().x;
+    const rsCollapseDragOk = rsCollapseDrag.collapsed && rsCollapseDrag.bodyCollapsed
+      && rsCollapseDrag.storedW === 320 && rsCollapseDrag.widthAfter === '320px'
+      && rsCollapseDrag.expandedW === '320px' && rsViewX3 === 320;
+    console.log(`SMOKE_RS_COLLAPSE_DRAG ok=${rsCollapseDragOk} collapsed=${rsCollapseDrag.collapsed} body=${rsCollapseDrag.bodyCollapsed} storedW=${rsCollapseDrag.storedW} widthAfter=${rsCollapseDrag.widthAfter} expandedW=${rsCollapseDrag.expandedW} viewX=${rsViewX3}`);
 
     await win.webContents.executeJavaScript(`webdeck.removeApp('${rsApp.id}')`, true);
 
@@ -921,7 +978,7 @@ async function createWindow() {
   expandView.setBackgroundColor('#00000000');
   expandView.setVisible(false); // 默认展开态隐藏，由 layoutExpandView 按状态显隐
   win.contentView.addChildView(expandView);
-  const theme = (await store.load()).settings.theme === 'light' ? 'light' : 'dark';
+  const theme = (await store.load()).settings.theme === 'dark' ? 'dark' : 'light'; // 缺失/非法回退亮色
   reloadExpandView(theme);
 
   // 页内查找栏覆盖视图：原生视图才能盖在应用 WebContentsView 之上（壳 UI 只在侧边栏可见）

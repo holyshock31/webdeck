@@ -5,11 +5,12 @@ const AVATAR_COLORS = ['#4f8cff', '#7f5af0', '#3ecf8e', '#f5b84c', '#f0656e', '#
 
 const SIDEBAR_MIN_WIDTH = 180;   // 侧边栏宽度下限
 const SIDEBAR_DEFAULT_WIDTH = 252; // 默认宽度（settings.sidebarWidth 缺失/损坏时回退）
+const COLLAPSE_DRAG_THRESHOLD = 80; // 拖拽收起阈值：释放点距窗口左缘 < 此值 → 收起（spec webdeck-core「侧边栏支持收起与展开」）
 
 let apps = [];
 let statuses = new Map(); // id -> { status, detail }
 let activeId = null;
-let theme = 'dark';       // 'dark' | 'light'（持久化于 settings.theme）
+let theme = 'light';      // 'light' | 'dark'（持久化于 settings.theme，缺失默认亮色）
 let logTimer = null;
 let sidebarCollapsed = false; // 侧边栏收起态（持久化于 settings.sidebarCollapsed，缺失默认展开）
 let sidebarWidth = SIDEBAR_DEFAULT_WIDTH; // 侧边栏当前宽度（--sidebar-width，持久化于 settings.sidebarWidth）
@@ -322,7 +323,7 @@ function collectForm() {
 // ---------------------------------------------------------------- 主题
 
 function applyTheme(t) {
-  theme = t === 'light' ? 'light' : 'dark'; // 非法/缺失一律回退 dark
+  theme = t === 'dark' ? 'dark' : 'light'; // 非法/缺失一律回退 light
   document.documentElement.dataset.theme = theme;
   const btn = $('#tb-theme');
   if (btn) {
@@ -371,16 +372,19 @@ async function toggleSidebar() {
 // ---------------------------------------------------------------- 侧边栏宽度调整
 
 // 宽度钳制：[180, max(180, 窗口宽度/2)]，拖动中与落盘前都钳制，保证主内容区始终可用
-function clampSidebarWidth(w) {
+// 宽度钳制：常规下限 180px、上限窗口宽度一半；allowCollapseZone 时下限放开到 0
+//（拖拽进入收起阈值区临时跟随指针，松手时才判定收起/回弹；窄宽度不落盘）
+function clampSidebarWidth(w, { allowCollapseZone = false } = {}) {
   const n = Math.round(Number(w));
   if (!Number.isFinite(n)) return sidebarWidth; // 非数值输入保持当前宽度
   const max = Math.max(SIDEBAR_MIN_WIDTH, Math.round(window.innerWidth / 2));
-  return Math.min(Math.max(n, SIDEBAR_MIN_WIDTH), max);
+  const min = allowCollapseZone ? 0 : SIDEBAR_MIN_WIDTH;
+  return Math.min(Math.max(n, min), max);
 }
 
 // 应用宽度：写入 --sidebar-width 变量（styles.css 中 #sidebar 宽度由此驱动）并记录状态
-function applySidebarWidth(w) {
-  const clamped = clampSidebarWidth(w);
+function applySidebarWidth(w, opts) {
+  const clamped = clampSidebarWidth(w, opts);
   sidebarWidth = clamped;
   document.documentElement.style.setProperty('--sidebar-width', `${clamped}px`);
   return clamped;
@@ -393,24 +397,41 @@ function initSidebarResizer() {
   const resizer = $('#sidebar-resizer');
   if (!resizer) return;
   let dragging = false;
+  let moved = false; // 拖动期间是否发生过 pointermove（纯点击不触发缩放）
+  let lastValidWidth = SIDEBAR_DEFAULT_WIDTH; // 拖动开始前的宽度：拖入阈值区收起时恢复（不落盘窄宽度）
   resizer.addEventListener('pointerdown', (e) => {
     if (document.body.classList.contains('sidebar-collapsed')) return;
     dragging = true;
+    moved = false;
+    lastValidWidth = sidebarWidth; // 拖动起点即"进入阈值区前的合法宽度"基线
     try { resizer.setPointerCapture(e.pointerId); } catch { /* 指针已失效等边缘情况：不阻断拖动 */ }
     document.body.classList.add('resizing');
+    webdeck.setSidebarResizing(true).catch(() => {}); // 拖动期间应用视图忽略鼠标，事件穿透到渲染层
     e.preventDefault();
   });
   resizer.addEventListener('pointermove', (e) => {
     if (!dragging) return;
-    const w = applySidebarWidth(e.clientX);
-    webdeck.setSidebarWidthPreview(w).catch(() => {}); // 实时同步原生视图，不落盘
+    moved = true;
+    applySidebarWidth(e.clientX, { allowCollapseZone: true }); // 阈值区内允许低于 180 临时跟随
+    webdeck.setSidebarWidthPreview(e.clientX).catch(() => {}); // 实时同步原生视图，不落盘
   });
   const endDrag = (e) => {
     if (!dragging) return;
     dragging = false;
     document.body.classList.remove('resizing');
+    webdeck.setSidebarResizing(false).catch(() => {}); // 恢复应用视图鼠标事件（含 cancel 路径）
     if (resizer.hasPointerCapture(e.pointerId)) resizer.releasePointerCapture(e.pointerId);
     if (e.type === 'pointercancel') return; // 取消（指针丢失等）：保持当前宽度，不落盘
+    if (!moved) return; // 纯点击（无移动）：只清除拖拽态，不改变宽度
+    const raw = Number(e.clientX);
+    if (Number.isFinite(raw) && raw < COLLAPSE_DRAG_THRESHOLD) {
+      // 拖入收起阈值区：恢复进入阈值区前的合法宽度并持久化（窄宽度不落盘），进入收起态
+      applySidebarWidth(lastValidWidth);
+      webdeck.setSidebarWidth(lastValidWidth).catch(() => {}); // 与主进程宽度保持一致（展开时视图对齐）
+      applySidebarCollapsed(true);
+      webdeck.setSidebarCollapsed(true).catch(() => {}); // 与按钮/⌘\ 收起等效（含持久化与展开恢复）
+      return;
+    }
     const w = applySidebarWidth(e.clientX);
     webdeck.setSidebarWidth(w).catch(() => {}); // 拖动结束落盘，重启后保持
   };

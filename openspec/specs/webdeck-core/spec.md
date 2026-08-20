@@ -1,6 +1,9 @@
 # webdeck-core Specification
 
-## Requirements
+## Purpose
+
+WebDeck 应用核心能力的规格：应用增删改查与持久化、本地服务启动/停止与健康监测、侧边栏与窗口交互、查找、更新服务等主进程与渲染层的行为契约。
+
 ## Requirements
 
 ### Requirement: 通过 URL 添加应用并配置启动方式

@@ -1,6 +1,9 @@
 # webdeck-theming Specification
 
-## Requirements
+## Purpose
+
+WebDeck 主题能力的规格：亮/暗主题切换、选择持久化与重启保持。
+
 ## Requirements
 
 ### Requirement: 壳界面提供主题切换入口

@@ -167,7 +167,7 @@ git tag v0.2.0 && git push origin v0.2.0
     #    p12 的 base64，不带换行）、CSC_KEY_PASSWORD = p12 密码
     ```
     （私钥若未随证书导入钥匙串，可用 `openssl pkcs12 -export -inkey csc.key.pem -in csc.cert.pem -passout pass:<p12密码> -out csc.p12` 直接合成 p12。）
-    **注意**：导出 p12 必须指定 AES-256-CBC 加密（`-keypbe AES-256-CBC -certpbe AES-256-CBC`），否则默认的 RC2-40 加密在 CI（OpenSSL 3）上解析失败（`Algorithm (RC2-40-CBC) unsupported`）。
+    **注意**：p12 保持 openssl 默认加密即可（CI 经 macOS `security import` 导入，默认算法兼容）；**不要**用 `-keypbe AES-256-CBC` 等参数——Apple 钥匙串工具链对该格式报 `Unknown format in import`。
   - **过渡安装**：已安装 ad-hoc 旧版（v0.1.16 及更早）的机器无法自动升级到首个证书签名版本（Squirrel.Mac 仍用旧版二进制哈希校验）——**首个证书签名版本需手动下载 dmg 安装一次**（右键→打开放行），此后自动更新恢复正常。发布说明会对此标注
 - **Windows**：当前决策「**先不签**」（零成本）——未签名 exe 首次运行会有 SmartScreen 提示，绕过方法见下方常见问题；后续分发规模上来可升级 **Azure Trusted Signing**（微软云签名，低成本、信誉建立快），升级路径：配置该服务后把签名步骤接入 release.yml
 - 两个决策都会随发布演进更新：产物一旦对外分发，建议优先补齐 macOS 签名公证（Gatekeeper 拦截体验最差）

@@ -68,38 +68,63 @@ jobs:
 
       - name: Build macOS (cert-signed, no notarization)
         if: runner.os == 'macOS' && env.HAS_CSC_LINK == 'true' && env.HAS_APPLE_CREDS == 'false'
-        # 证书签名（自签名/任意 p12），不公证：
-        #   1) 从 CSC_LINK p12 提取证书并加入 login keychain 信任（无需 sudo；runner
-        #      为临时环境，信任设置无持久副作用）——electron-builder 身份发现只认
-        #      find-identity -v 有效身份（macCodeSign.js getValidIdentities），
-        #      信任后其"custom non-Apple code signing certificate"回退即可命中；
-        #   2) electron-builder 一步出 dmg + zip + latest-mac.yml：app-update.yml
-        #      由 electron-builder 在签名前写入密封资源（macPackager pack() 先
-        #      emitAfterPack 后 doSignAfterPack），无需 dir→注入→手动签名绕行；
-        #      hardenedRuntime=false（无公证需求，且无 Team ID 签名下 library
-        #      validation 存在兼容风险）；
-        #   3) 出包断言：zip 内 app 严格校验通过、指定需求为证书锚定（certificate
-        #      root = H"..."，非 cdhash）——防止回归到 ad-hoc 形态；含 app-update.yml。
-        # 注意：证书签名依赖 Apple timestamp 服务器（GitHub 官方 runner 标准可达）。
+        # 证书签名（自签名/任意 p12），不公证。全链路本机实测验证过，要点：
+        #   1) --mac dir 构建未签名 .app（--config.mac.identity=null 显式禁掉
+        #      electron-builder 自动签名——其身份发现只认受信任身份，自签名证书
+        #      会跳过签名）；
+        #   2) 注入 app-update.yml（必须在签名前——进入密封资源）；
+        #   3) 临时钥匙串导入 CSC_LINK 证书（无 UI 命令，electron-builder 同款流程；
+        #      不用 security add-trusted-cert——无 GUI runner 上会挂起等 UI）；
+        #   4) 自底向上逐组件签名（禁用 --deep：Electron 37 发行版含 linker-signed
+        #      组件，--deep 证书签名替换报 errSecInternalComponent；--timestamp=none
+        #      不依赖外部 timestamp 服务器）；
+        #   5) 断言：严格校验 + 指定需求为证书锚定（certificate root = H"..."，非
+        #      cdhash）——防回归 ad-hoc 形态；
+        #   6) --prepackaged 出 dmg/zip/latest-mac.yml（元数据与实际资产天然一致，
+        #      artifactName 保持 -unsigned 后缀约定）；
+        #   7) 出包断言：zip 内 app 严格校验 + 含 app-update.yml（缺失即 job 失败）。
         run: |
+          npx electron-builder --mac dir --publish never --config.mac.identity=null
+          APP_PATH="$(find dist -maxdepth 2 -name '*.app' -type d | head -1)"
+          printf 'owner: holyshock31\nrepo: webdeck\nprovider: github\nupdaterCacheDirName: webdeck-updater\n' \
+            > "$APP_PATH/Contents/Resources/app-update.yml"
           echo "$CSC_LINK" | base64 -d > /tmp/csc.p12
-          openssl pkcs12 -in /tmp/csc.p12 -clcerts -nokeys -out /tmp/csc-cert.pem -passin pass:"$CSC_KEY_PASSWORD"
-          security add-trusted-cert -d -r trustRoot -k "$HOME/Library/Keychains/login.keychain-db" /tmp/csc-cert.pem
-          security find-identity -v -p codesigning | grep -qE '^ *[0-9]+\)' \
-            || { echo "FAIL: 证书未成为有效签名身份"; exit 1; }
-          npx electron-builder --mac --publish never \
-            --config.mac.hardenedRuntime=false \
+          KEYCHAIN="/tmp/webdeck-signing.keychain-db"
+          KEYCHAIN_PASS="$(openssl rand -base64 24)"
+          rm -f "$KEYCHAIN"
+          security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN"
+          security set-keychain-settings "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          security import /tmp/csc.p12 -k "$KEYCHAIN" -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASS" "$KEYCHAIN"
+          IDENT="$(security find-identity -p codesigning "$KEYCHAIN" | grep -oE '[0-9A-F]{40}' | head -1)"
+          [ -n "$IDENT" ] || { echo "FAIL: 未找到签名身份"; exit 1; }
+          find "$APP_PATH/Contents" -type f \( -name '*.dylib' -o -path '*/Helpers/*' \) -print0 \
+            | while IFS= read -r -d '' f; do
+                file "$f" | grep -q 'Mach-O' && codesign --force --sign "$IDENT" --timestamp=none "$f"
+              done
+          for fw in "$APP_PATH/Contents/Frameworks"/*.framework; do
+            codesign --force --sign "$IDENT" --timestamp=none "$fw"
+          done
+          for h in "$APP_PATH/Contents/Frameworks"/*.app; do
+            codesign --force --sign "$IDENT" --timestamp=none "$h"
+          done
+          codesign --force --sign "$IDENT" --timestamp=none "$APP_PATH"
+          codesign --verify --deep --strict "$APP_PATH" \
+            || { echo "FAIL: 产物签名校验未通过"; exit 1; }
+          codesign -d --requirements - "$APP_PATH" | grep -q 'certificate root = H"' \
+            || { echo "FAIL: 产物指定需求非证书锚定（可能退回 ad-hoc）"; exit 1; }
+          codesign -d --requirements - "$APP_PATH" | grep -q 'cdhash H"' \
+            && { echo "FAIL: 产物指定需求为 cdhash（ad-hoc 形态）"; exit 1; }
+          npx electron-builder --mac --prepackaged "$APP_PATH" --publish never \
             --config.mac.artifactName=WebDeck-\${version}-\${arch}-mac\${env.UNSIGNED_SUFFIX}.\${ext}
           ZIP="$(ls dist/WebDeck-*-mac-*.zip | head -1)"
           rm -rf /tmp/verify-app && mkdir -p /tmp/verify-app
           unzip -q "$ZIP" -d /tmp/verify-app
           VERIFY_APP="$(find /tmp/verify-app -maxdepth 2 -name '*.app' -type d | head -1)"
           codesign --verify --deep --strict "$VERIFY_APP" \
-            || { echo "FAIL: 产物签名校验未通过"; exit 1; }
-          codesign -d --requirements - "$VERIFY_APP" | grep -q 'certificate root = H"' \
-            || { echo "FAIL: 产物指定需求非证书锚定（可能退回 ad-hoc）"; exit 1; }
-          codesign -d --requirements - "$VERIFY_APP" | grep -q 'cdhash H"' \
-            && { echo "FAIL: 产物指定需求为 cdhash（ad-hoc 形态）"; exit 1; }
+            || { echo "FAIL: 产物 zip 内签名校验未通过"; exit 1; }
           test -f "$VERIFY_APP/Contents/Resources/app-update.yml" \
             || { echo "FAIL: 产物 zip 缺少 Contents/Resources/app-update.yml"; exit 1; }
         env:

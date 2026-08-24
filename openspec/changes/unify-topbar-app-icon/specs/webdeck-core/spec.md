@@ -1,3 +1,5 @@
+Status: implemented
+
 ## ADDED Requirements
 
 ### Requirement: 侧边栏品牌标识使用应用图标
